@@ -1,0 +1,24 @@
+# macOS
+.DS_Store
+
+# Build artifacts
+*.o
+*.a
+.deps/
+.dirstamp
+autom4te.cache/
+config.log
+config.status
+config.cache
+Makefile
+/pcem
+
+# Copyrighted BIOS ROM images - not distributed, supply your own
+roms/
+
+# User data (machine configs, NVR/CMOS, screenshots)
+configs/
+nvr/
+screenshots/
+pcem.cfg
+*.nvr
