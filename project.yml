@@ -1,0 +1,186 @@
+# PCem.xcodeproj is GENERATED from this file by XcodeGen (brew install xcodegen).
+# Never edit the .xcodeproj by hand — edit this file and run `xcodegen`.
+#
+# Source lists mirror src/Makefile.am for the macOS (OS_MACOSX, CPU_ARM64) build.
+# See AGENTS.md for the architecture notes behind the target split.
+
+name: PCem
+
+options:
+  bundleIdPrefix: com.pcem
+  deploymentTarget:
+    macOS: "26.0"
+
+settings:
+  base:
+    ARCHS: arm64
+    CLANG_C_LANGUAGE_STANDARD: gnu11
+    CLANG_CXX_LANGUAGE_STANDARD: gnu++17
+    # Keep #include textual. With modules on, including <sys/time.h> imports the
+    # whole Darwin module, whose mach/task.h 'thread_create' collides with
+    # PCem's own thread_create in wx-thread.c.
+    CLANG_ENABLE_MODULES: NO
+    # PCem declares the same globals (e.g. `void *menu;`) in several .c files and
+    # relies on the linker merging these "common symbols" — the autotools build
+    # passes -fcommon; this is the Xcode equivalent.
+    GCC_NO_COMMON_BLOCKS: NO
+    GCC_PREPROCESSOR_DEFINITIONS:
+      # macOS render loop drives rendering from a wx timer (see AGENTS.md)
+      - PCEM_RENDER_WITH_TIMER
+      - PCEM_RENDER_TIMER_LOOP
+      # macOS has no off64_t/fopen64; off_t is already 64-bit
+      - off64_t=off_t
+      - fopen64=fopen
+      - fseeko64=fseek
+      - ftello64=ftell
+      # from wx-config --cxxflags / sdl2-config --cflags
+      - _FILE_OFFSET_BITS=64
+      - wxDEBUG_LEVEL=0
+      - WXUSINGDLL
+      - __WXMAC__
+      - __WXOSX__
+      - __WXOSX_COCOA__
+      - _THREAD_SAFE
+    HEADER_SEARCH_PATHS:
+      - /opt/homebrew/include
+      - /opt/homebrew/include/SDL2
+      - /opt/homebrew/include/wx-3.3
+      - /opt/homebrew/lib/wx/include/osx_cocoa-unicode-3.3
+      - $(SRCROOT)/src
+    LIBRARY_SEARCH_PATHS:
+      - /opt/homebrew/lib
+
+targets:
+
+  # ---- PCemCore: the emulator core, no UI. The future Swift app links this. ----
+  PCemCore:
+    type: library.static
+    platform: macOS
+    sources:
+      - path: src
+        excludes:
+          # UI layer (lives in the PCem app target for now)
+          - "wx-*"
+          # not part of the macOS build (see src/Makefile.am)
+          - ".deps/**"
+          - "icons/**"
+          - "slirp/**"                  # networking disabled
+          - "ne2000.c"                  # networking disabled
+          - "nethandler.c"              # networking disabled
+          - "codegen_x86-64.c"          # orphan, not in Makefile.am
+          - "thread-pthread.c"          # orphan; wx-thread.c provides thread.h
+          - "vid_et4000w32i.c"          # orphan, not in Makefile.am
+          - "win-midi.c"                # Windows-only
+          - "zenith.c"                  # orphan, not in Makefile.am
+          - "cdrom-ioctl.c"             # Windows-only
+          - "cdrom-ioctl-linux.c"       # Linux-only
+          - "cdrom-ioctl-dummy.c"       # other-OS fallback
+          - "midi_alsa.c"               # Linux-only (macOS uses wx-sdl2-midi.c stub)
+          # dynarec backends for other CPUs (arm64 is selected via __aarch64__)
+          - "codegen_backend_x86.c"
+          - "codegen_backend_x86_ops.c"
+          - "codegen_backend_x86_ops_fpu.c"
+          - "codegen_backend_x86_ops_sse.c"
+          - "codegen_backend_x86_uops.c"
+          - "codegen_backend_x86-64.c"
+          - "codegen_backend_x86-64_ops.c"
+          - "codegen_backend_x86-64_ops_sse.c"
+          - "codegen_backend_x86-64_uops.c"
+          - "codegen_backend_arm.c"
+          - "codegen_backend_arm_ops.c"
+          - "codegen_backend_arm_uops.c"
+      # pthread implementation of thread.h — a CORE dependency despite the wx- name
+      - path: src/wx-thread.c
+
+  # ---- PCem: the wxWidgets+SDL2 UI, linked against PCemCore. ----
+  PCem:
+    type: application
+    platform: macOS
+    sources:
+      # explicit list, mirrors src/Makefile.am (minus wx-thread.c, which is in PCemCore)
+      - src/wx-main.cc
+      - src/wx-config_sel.c
+      - src/wx-dialogbox.cc
+      - src/wx-utils.cc
+      - src/wx-app.cc
+      - src/wx-sdl2-joystick.c
+      - src/wx-sdl2-mouse.c
+      - src/wx-sdl2-keyboard.c
+      - src/wx-sdl2-video.c
+      - src/wx-sdl2.c
+      - src/wx-config.c
+      - src/wx-deviceconfig.cc
+      - src/wx-status.cc
+      - src/wx-sdl2-status.c
+      - src/wx-common.c
+      - src/wx-sdl2-video-renderer.c
+      - src/wx-sdl2-video-gl3.c
+      - src/wx-glslp-parser.c
+      - src/wx-shader_man.c
+      - src/wx-shaderconfig.cc
+      - src/wx-joystickconfig.cc
+      - src/wx-createdisc.cc
+      - src/wx-resources.cpp
+      - src/wx-sdl2-midi.c
+      - src/wx-sdl2-display.c
+    dependencies:
+      - target: PCemCore
+      - sdk: OpenAL.framework
+      - sdk: OpenGL.framework
+      - sdk: IOKit.framework
+      - sdk: Carbon.framework
+      - sdk: Cocoa.framework
+      - sdk: QuartzCore.framework
+      - sdk: AudioToolbox.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pcem.PCem
+        CODE_SIGN_ENTITLEMENTS: macos/PCem.entitlements
+        # from wx-config --libs + sdl2-config --libs
+        OTHER_LDFLAGS:
+          - -lSDL2
+          - -lwx_osx_cocoau_xrc-3.3
+          - -lwx_osx_cocoau_html-3.3
+          - -lwx_osx_cocoau_qa-3.3
+          - -lwx_osx_cocoau_core-3.3
+          - -lwx_baseu_xml-3.3
+          - -lwx_baseu_net-3.3
+          - -lwx_baseu-3.3
+    info:
+      path: macos/Info.plist
+      properties:
+        CFBundleName: PCem
+        CFBundleDisplayName: PCem
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "17.0"
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundlePackageType: APPL
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+    # PCem locates roms/, configs/, nvr/, screenshots/ and pcem.cfg via
+    # SDL_GetBasePath(). For a bundled app SDL returns Contents/Resources/,
+    # for a plain binary the executable's directory. Symlink the repo's data
+    # folders into Resources so the app and the autotools build share the same
+    # ROMs and machine configs. (mkdir -p matters: Xcode doesn't create a
+    # Resources dir for apps without bundled resources, and PCem crashes
+    # writing pcem.log into a missing directory.)
+    postBuildScripts:
+      - name: Link PCem data folders into bundle
+        script: |
+          RES_DIR="$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME/Contents/Resources"
+          mkdir -p "$RES_DIR"
+          for item in roms nvr configs screenshots; do
+            ln -sfn "$SRCROOT/$item" "$RES_DIR/$item"
+          done
+          ln -sfn "$SRCROOT/pcem.cfg" "$RES_DIR/pcem.cfg"
+
+schemes:
+  PCem:
+    build:
+      targets:
+        PCem: all
+        PCemCore: all
+    run:
+      config: Debug
