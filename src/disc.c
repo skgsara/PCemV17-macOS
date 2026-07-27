@@ -89,7 +89,12 @@ void disc_load(int drive, char *fn)
                         loaders[c].load(drive, fn);
                         drive_empty[drive] = 0;
                         disc_changed[drive] = 1;
-                        strcpy(discfns[drive], fn);
+                        /* fn may point at discfns[drive] itself (resetpchard
+                           reloads with disc_load(drive, discfns[drive]));
+                           strcpy with overlapping buffers is undefined and
+                           traps under macOS fortified libc. */
+                        if (fn != discfns[drive])
+                                strcpy(discfns[drive], fn);
                         fdd_disc_changed(drive);
                         return;
                 }
