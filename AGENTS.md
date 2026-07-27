@@ -10,6 +10,15 @@ The owner is a programming beginner (some C reading, some Swift Playgrounds) doi
 a personal learning project. Explain what you change and why. Keep commit messages and
 comments educational but concise. Never dumb down the code itself.
 
+She takes medication that can cause brain fog and memory lapses. Practical consequences
+for every session:
+- Start each session by recapping where things stand in 2–3 sentences.
+- Never rely on chat as the only record: decisions, how-tos, and next steps go into
+  `AGENTS.md`, `docs/PORTING_LOG.md`, or `docs/START_HERE.md`.
+- Keep messages short and structured. One idea at a time. No walls of text.
+- If she seems confused about something already covered, point to the file that has it
+  — kindly, without commenting on the repetition itself.
+
 ## Goal
 
 Turn PCem v17 into a native macOS app on Apple Silicon by **gradually replacing the
@@ -115,7 +124,8 @@ Two independent build systems exist. **Both must keep working.**
 
 ## Rules for every session
 
-1. Read this file + the latest entries in `docs/PORTING_LOG.md` first.
+1. Read this file + the latest entries in `docs/PORTING_LOG.md` first. If the owner
+   seems lost, point her to `docs/START_HERE.md` (her personal quick-reference).
 2. Before finishing: update this file's status/roadmap and append a dated log entry
    describing what changed, what broke, and the exact next step.
 3. Commit per milestone (ask the owner before git mutations). Small, clear commits.
