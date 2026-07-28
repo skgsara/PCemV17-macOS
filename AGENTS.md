@@ -35,20 +35,27 @@ much as possible**. This is a multi-month effort done in milestones.
   `buffer32` (chose CALayer over Metal — simpler, swappable later); AppKit
   keyboard/mouse input. New target `PCemMac` + sources in `src/mac/`. ✅ 2026-07-27
 - **M4 — Config UI in SwiftUI**: replace machine manager (`wx-config_sel.c`) and settings
-  (`wx-config.c`) dialogs one at a time. ⬜ NEXT
+  (`wx-config.c`) dialogs one at a time. 🔶 IN PROGRESS — machine manager ✅ 2026-07-28,
+  settings dialog ⬜ NEXT
 - **M5 — Remove wx entirely**: drop SDL/wx dependencies; optionally replace OpenAL with
   CoreAudio; CoreMIDI; app icon/signing/notarization. ⬜
 
 ## Current status
 
-M0–M3 done (2026-07-27). New target `PCemMac`: a native Swift/AppKit shell with **no
-SDL2 and no wxWidgets**, linking `PCemCore` via the bridge in `src/mac/`. Verified by
-the owner (2026-07-28): MS-DOS 5 boots, keyboard works, mouse capture/release works,
-and the guest cursor tracks the touchpad in both DOS and Windows 3.1 (after the
-tracking-area fix — see `EmulatorView.swift` bullet below and the 2026-07-28 entry
-in `docs/PORTING_LOG.md`).
-Machine *configuration* still uses the wx build (`PCem` target, kept as reference
-until M5). Next session: M4 (config UI in SwiftUI) — see "How to attack M4" below.
+M0–M3 done (2026-07-27); M4 step 1 done (2026-07-28). New target `PCemMac`: a native
+Swift/AppKit shell with **no SDL2 and no wxWidgets**, linking `PCemCore` via the
+bridge in `src/mac/`. Verified by the owner (2026-07-28): MS-DOS 5 boots, keyboard
+works, mouse capture/release works, and the guest cursor tracks the touchpad in
+both DOS and Windows 3.1 (after the tracking-area fix — see `EmulatorView.swift`
+bullet below and the 2026-07-28 entry in `docs/PORTING_LOG.md`).
+M4 step 1: the wx machine manager is replaced by a SwiftUI sheet (Machine →
+Manage Machines…): list/New/Copy/Rename/Delete/Boot via new
+`pcem_bridge_config_*` functions; view in `src/mac/MachineManagerView.swift`.
+Caveat: **New** copies the running machine's settings (the wx dialog opened the
+settings editor first; ours doesn't exist yet — that's M4 step 2).
+Per-machine *settings* still use the wx build (`PCem` target, kept as reference
+until M5). Next session: M4 step 2 (settings dialog in SwiftUI) — see
+"How to attack M4" below.
 
 ## How to build
 
@@ -155,17 +162,18 @@ Two independent build systems exist. **Both must keep working.**
 
 Replace the wx config dialogs with SwiftUI, one at a time, in the `PCemMac` target:
 
-1. **Machine manager first** (`wx-config_sel.c`): the bridge already lists configs
-   and switches machines (`pcem_bridge_use_config`). Add "new / rename / delete
-   config" to the bridge (plain file ops on `configs/*.cfg` + `saveconfig(NULL)`),
-   then a SwiftUI dialog. Reference: how `wx-config_sel.c` sets
-   `config_file_default` / `config_name`.
-2. **Settings dialog** (`wx-config.c`, the big one): it reads/writes the core's
+1. ~~**Machine manager first** (`wx-config_sel.c`)~~ ✅ 2026-07-28 — bridge file ops
+   (`pcem_bridge_config_create/rename/copy/delete/rescan`,
+   `pcem_bridge_use_config_named`) + SwiftUI sheet
+   `src/mac/MachineManagerView.swift`, presented from Machine → Manage Machines….
+   Caveat: "New" copies the running machine's settings until step 2 exists.
+2. **Settings dialog** (`wx-config.c`, the big one) ⬜ NEXT: it reads/writes the core's
    config via `config_get_int`/`config_set_int` (CFG_MACHINE) and globals
    (`model`, `cpu`, `mem_size`, `gfxcard`, …). Plan: expose a small typed C API in
    the bridge per settings section (machine, video, sound, drives) rather than
    wrapping every key. Apply = set globals + `saveconfig(NULL)` + reboot
-   (`use_config`-style stop/boot cycle).
+   (`use_config`-style stop/boot cycle). When it exists, wire "Configure…" into
+   the machine manager sheet and make "New" open it (like wx IDC_NEW does).
 3. Device config dialogs (`wx-deviceconfig.cc`) come last; some devices have custom
    UIs — stub or defer to M5.
 4. Keep the wx `PCem` target building until M5 removes it.

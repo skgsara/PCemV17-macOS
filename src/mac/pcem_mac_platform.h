@@ -31,6 +31,8 @@ void pcem_mac_run_on_main(void (*fn)(void *), void *ctx);
 void pcem_mac_defaults_set_string(const char *key, const char *value);
 /* Returns 1 and fills buf if the key exists, else 0. */
 int  pcem_mac_defaults_get_string(const char *key, char *buf, int size);
+/* Remove a key (used to keep lastMachine consistent on delete/rename). */
+void pcem_mac_defaults_remove(const char *key);
 
 #ifdef __cplusplus
 }

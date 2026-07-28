@@ -61,3 +61,9 @@ int pcem_mac_defaults_get_string(const char *key, char *buf, int size)
         snprintf(buf, size, "%s", [val UTF8String]);
         return 1;
 }
+
+void pcem_mac_defaults_remove(const char *key)
+{
+        [[NSUserDefaults standardUserDefaults]
+                removeObjectForKey:[NSString stringWithUTF8String:key]];
+}

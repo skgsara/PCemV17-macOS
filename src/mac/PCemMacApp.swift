@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import UniformTypeIdentifiers
 
 /// Native macOS shell for PCem. Boots the emulator core through the C bridge
@@ -269,6 +270,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             item.state = (name == current) ? .on : .off
             machineMenu.addItem(item)
         }
+        machineMenu.addItem(.separator())
+        machineMenu.addItem(withTitle: "Manage Machines…",
+                            action: #selector(manageMachines), keyEquivalent: "")
+    }
+
+    // MARK: - Machine manager (M4: SwiftUI replacement for wx-config_sel.c)
+
+    /// Sheet window hosting the SwiftUI machine manager, while presented.
+    private var machineManagerWindow: NSWindow?
+
+    @objc private func manageMachines() {
+        let view = MachineManagerView(
+            onBoot: { [weak self] name in
+                guard let self else { return }
+                self.dismissMachineManager()
+                self.emulatorView.releaseMouse()
+                pcem_bridge_use_config_named(name)
+            },
+            onDone: { [weak self] in
+                self?.dismissMachineManager()
+            })
+        let panel = NSWindow(contentViewController: NSHostingController(rootView: view))
+        panel.title = "Machines"
+        machineManagerWindow = panel
+        window.beginSheet(panel)
+    }
+
+    private func dismissMachineManager() {
+        if let sheet = machineManagerWindow {
+            window.endSheet(sheet)
+            machineManagerWindow = nil
+        }
+        rebuildMachineMenu() // names/checkmark may have changed
     }
 
     /// Keeps checkmarks (BPB, sound radios) and enable states (eject items)

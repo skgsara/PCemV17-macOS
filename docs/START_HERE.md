@@ -55,11 +55,16 @@ When you feel up to it (no rush): run the **PCemMac** scheme and play with the
 new menus — mount a floppy from the **Disc** menu, switch window size in
 **View**, and release the mouse with **Ctrl+Option+M**.
 
-## What M4 is (the next fun part)
+## What M4 is (the current fun part)
 
-Right now, changing a machine's settings (CPU, memory, video card…) still opens
-the old wxWidgets dialogs. In M4 we rebuild those dialogs in SwiftUI, one at a
-time — first the machine picker, then the settings window.
+Changing a machine's settings (CPU, memory, video card…) still opens the old
+wxWidgets dialogs. In M4 we rebuild those dialogs in SwiftUI, one at a time.
+
+- **Done (2026-07-28): the machine manager.** In PCemMac, open **Machine →
+  Manage Machines…** to create, copy, rename, delete and boot your saved
+  machines. One caveat: a *new* machine starts as a copy of the one currently
+  running (the old app opened the settings window right away; ours comes next).
+- **Next: the settings window itself** (CPU, memory, video…), in SwiftUI.
 
 ## What happened on 2026-07-28 (the short version)
 
@@ -73,6 +78,9 @@ time — first the machine picker, then the settings window.
   in both DOS and Windows 3.1. The old wx app was our control experiment:
   its mouse worked all along, which proved the bug was in our new shell,
   not in the emulator engine.
+- Evening: the first M4 dialog landed. **Machine → Manage Machines…** in
+  PCemMac now creates, copies, renames, deletes and boots machines — all
+  native SwiftUI, no wxWidgets. Give it a try when you feel like it.
 
 ## What happened on 2026-07-27 (the short version)
 

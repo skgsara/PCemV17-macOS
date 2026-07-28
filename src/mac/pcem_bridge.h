@@ -43,6 +43,18 @@ const char *pcem_bridge_config_name(int index); /* name without .cfg */
 const char *pcem_bridge_current_config_name(void);
 /* Switch machine: stops, loads that config, cold-boots it. */
 void        pcem_bridge_use_config(int index);
+/* Same, by config name (safe against list rescans shifting indices). */
+void        pcem_bridge_use_config_named(const char *name);
+
+/* ---- Machine manager (M4): file ops on configs/*.cfg ---------------------
+   All return 0 = ok, 1 = name already exists, 2 = invalid name,
+   3 = file error. Names are without the .cfg extension. */
+int  pcem_bridge_config_create(const char *name); /* save current settings as name.cfg */
+int  pcem_bridge_config_rename(const char *old_name, const char *new_name);
+int  pcem_bridge_config_copy(const char *old_name, const char *new_name);
+int  pcem_bridge_config_delete(const char *name);
+/* Re-list the configs/ dir after file ops (updates count/name accessors). */
+void pcem_bridge_config_rescan(void);
 
 /* ---- Drives & sound (mirror the wx context-menu handlers) -----------------
    All of these are safe to call from the UI thread while emulation runs

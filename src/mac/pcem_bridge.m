@@ -665,6 +665,160 @@ void pcem_bridge_use_config(int index)
 }
 
 /* ========================================================================
+ * Machine manager (M4): file ops on configs/*.cfg
+ * (replaces the wx machine-manager dialog, wx-config_sel.c)
+ * ======================================================================== */
+
+static int config_name_valid(const char *name)
+{
+        size_t len;
+        if (!name)
+                return 0;
+        len = strlen(name);
+        if (len == 0 || len >= 200)
+                return 0;
+        if (name[0] == '.')
+                return 0;
+        if (strchr(name, '/') || strchr(name, '\\'))
+                return 0;
+        return 1;
+}
+
+static void config_path_for(const char *name, char *out, int size)
+{
+        snprintf(out, size, "%s%s%s.cfg", configs_path,
+                 configs_path[strlen(configs_path) - 1] == '/' ? "" : "/",
+                 name);
+}
+
+/* If lastMachine still points at old_name, move it to new_name (or remove it
+   when new_name is NULL). Keeps the auto-boot memory consistent after
+   rename/delete. */
+static void lastmachine_fixup(const char *old_name, const char *new_name)
+{
+        char saved[256];
+        if (pcem_mac_defaults_get_string("lastMachine", saved, sizeof(saved)) &&
+            !strcmp(saved, old_name))
+        {
+                if (new_name)
+                        pcem_mac_defaults_set_string("lastMachine", new_name);
+                else
+                        pcem_mac_defaults_remove("lastMachine");
+        }
+}
+
+int pcem_bridge_config_create(const char *name)
+{
+        char path[512];
+
+        if (!config_name_valid(name))
+                return 2;
+        config_path_for(name, path, sizeof(path));
+        {
+                struct stat st;
+                if (stat(path, &st) == 0)
+                        return 1; /* already exists */
+        }
+        /* wx opens its settings dialog before saving (wx-config_sel.c IDC_NEW).
+           Our settings dialog doesn't exist yet (M4 step 2), so the new config
+           starts as a copy of the current machine's settings. */
+        saveconfig(path);
+        return 0;
+}
+
+int pcem_bridge_config_rename(const char *old_name, const char *new_name)
+{
+        char old_path[512], new_path[512];
+        struct stat st;
+
+        if (!config_name_valid(new_name))
+                return 2;
+        config_path_for(old_name, old_path, sizeof(old_path));
+        config_path_for(new_name, new_path, sizeof(new_path));
+        if (stat(new_path, &st) == 0)
+                return 1;
+        if (rename(old_path, new_path) != 0)
+                return 3;
+        if (!strcmp(config_name, old_name))
+        {
+                /* The renamed config is the booted machine: follow it. */
+                strcpy(config_name, new_name);
+                strcpy(config_file_default, new_path);
+        }
+        lastmachine_fixup(old_name, new_name);
+        return 0;
+}
+
+int pcem_bridge_config_copy(const char *old_name, const char *new_name)
+{
+        char old_path[512], new_path[512];
+        char buf[4096];
+        FILE *in, *out;
+        size_t n;
+        struct stat st;
+
+        if (!config_name_valid(new_name))
+                return 2;
+        config_path_for(old_name, old_path, sizeof(old_path));
+        config_path_for(new_name, new_path, sizeof(new_path));
+        if (stat(new_path, &st) == 0)
+                return 1;
+        in = fopen(old_path, "rb");
+        if (!in)
+                return 3;
+        out = fopen(new_path, "wb");
+        if (!out)
+        {
+                fclose(in);
+                return 3;
+        }
+        while ((n = fread(buf, 1, sizeof(buf), in)) > 0)
+        {
+                if (fwrite(buf, 1, n, out) != n)
+                {
+                        fclose(in);
+                        fclose(out);
+                        remove(new_path);
+                        return 3;
+                }
+        }
+        fclose(in);
+        fclose(out);
+        return 0;
+}
+
+int pcem_bridge_config_delete(const char *name)
+{
+        char path[512];
+
+        if (!config_name_valid(name))
+                return 2;
+        config_path_for(name, path, sizeof(path));
+        if (remove(path) != 0)
+                return 3;
+        lastmachine_fixup(name, NULL);
+        return 0;
+}
+
+void pcem_bridge_config_rescan(void)
+{
+        scan_configs();
+}
+
+void pcem_bridge_use_config_named(const char *name)
+{
+        int i;
+        for (i = 0; i < config_count; i++)
+        {
+                if (!strcmp(config_names[i], name))
+                {
+                        pcem_bridge_use_config(i);
+                        return;
+                }
+        }
+}
+
+/* ========================================================================
  * Input injection (called from the UI thread)
  * ======================================================================== */
 

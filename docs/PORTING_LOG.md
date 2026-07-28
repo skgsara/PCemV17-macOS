@@ -216,3 +216,38 @@ installs an `NSTrackingArea` with `.mouseMoved + .activeAlways + .inVisibleRect`
 both DOS and Windows 3.1.
 
 **Next (M4)**: SwiftUI config UI — see "How to attack M4" in AGENTS.md.
+
+---
+
+## 2026-07-28 (evening) — Session 5: machine manager in SwiftUI (M4 step 1)
+
+**Done** — the wx machine-manager dialog (`wx-config_sel.c`) is replaced in the
+`PCemMac` target:
+- Bridge (`pcem_bridge.h/.m`): new `pcem_bridge_config_create/rename/copy/delete`
+  (plain libc file ops on `configs/*.cfg`; return codes 0 ok / 1 exists /
+  2 invalid name / 3 file error), `pcem_bridge_config_rescan`, and
+  `pcem_bridge_use_config_named` (boot by name — index-based boot would drift
+  after rescans). Rename of the booted machine follows it (`config_name`,
+  `config_file_default`); rename/delete keeps the `lastMachine` default
+  consistent (new `pcem_mac_defaults_remove` in `pcem_mac_platform.m`).
+- SwiftUI: `src/mac/MachineManagerView.swift` — list with "running" marker,
+  New / Copy / Rename / Delete / Boot / Done, double-click boots, `.alert` with
+  TextField for name entry, confirmation on delete, "already exists" error
+  (same wording as wx).
+- `PCemMacApp.swift`: Machine menu gains "Manage Machines…" (added in
+  `rebuildMachineMenu`), presented as a sheet via `NSHostingController`;
+  boot dismisses, releases the mouse and calls `use_config_named`; the menu is
+  rebuilt on dismiss.
+
+**Design note**: wx "New" opened the settings dialog before saving. Our
+settings dialog doesn't exist yet (M4 step 2), so **New** saves the *current*
+machine's settings under the new name (comment in `pcem_bridge_config_create`,
+hint text in the sheet). Revisit when step 2 lands.
+
+**Verification**: `xcodegen` regen + `xcodebuild` PCemMac and PCem (wx) schemes
+both clean; autotools `make` untouched and still links. 15 s smoke run: app
+boots the remembered machine (floppy seeks in `pcem.log`). Owner confirmed the
+same day: the sheet works (create/copy/rename/delete/boot).
+
+**Next (M4 step 2)**: the settings dialog (`wx-config.c`) in SwiftUI — typed
+bridge API per section, see "How to attack M4" in AGENTS.md.
