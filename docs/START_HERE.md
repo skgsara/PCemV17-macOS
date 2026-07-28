@@ -12,8 +12,8 @@ You have **two working Mac apps** from the same project:
   SDL. It boots the emulator, shows the screen, and handles keyboard and mouse.
   Verified by you on 2026-07-28: MS-DOS 5 boots, and the mouse follows your
   finger in both DOS and Windows 3.1.
-- **PCem** (original) — the wxWidgets interface. Still needed to *configure*
-  machines; keep it until M5.
+- **PCem** (original) — the wxWidgets interface. Only still needed for
+  hard-disc setup in machine settings; keep it until M5.
 
 The big goal: slowly replace PCem's old interface (wxWidgets) with a native Mac
 interface written in Swift. The plan lives in `AGENTS.md` (milestones M0–M5).
@@ -27,7 +27,12 @@ Done so far: M0, M1, M2, M3.
    - **PCem** = the old wx app (use this one to change machine settings)
 3. Press **⌘R** (Run).
 
-In PCemMac: the app boots straight into your last-used machine (it remembers).
+In PCemMac: the app opens the **machine manager first**, just like the original
+PCem. Pick a machine and press **Boot** (or double-click it) to start. Your
+last-used machine is preselected for you. **Configure…** changes a machine's
+settings *before* it runs; **Machine → Settings…** changes the machine that's
+currently running (it warns before rebooting). When a machine shuts down,
+you're back at the machine manager.
 Click the emulated screen to capture the mouse. **Ctrl+Option+M** releases it
 (or View → Release Mouse; middle-click / Ctrl+End also work on external
 keyboards). The menu bar mirrors the old app's right-click menu: **System**
@@ -57,14 +62,19 @@ new menus — mount a floppy from the **Disc** menu, switch window size in
 
 ## What M4 is (the current fun part)
 
-Changing a machine's settings (CPU, memory, video card…) still opens the old
-wxWidgets dialogs. In M4 we rebuild those dialogs in SwiftUI, one at a time.
+Changing a machine's settings used to open the old wxWidgets dialogs. In M4 we
+rebuild those dialogs in SwiftUI, one at a time.
 
 - **Done (2026-07-28): the machine manager.** In PCemMac, open **Machine →
   Manage Machines…** to create, copy, rename, delete and boot your saved
-  machines. One caveat: a *new* machine starts as a copy of the one currently
-  running (the old app opened the settings window right away; ours comes next).
-- **Next: the settings window itself** (CPU, memory, video…), in SwiftUI.
+  machines.
+- **Done (2026-07-28): the settings window.** **Machine → Settings…** now
+  changes CPU, memory, video card, sound, drives, mouse and joystick — all
+  native. If your change needs a reboot, it asks first, just like the old app.
+  One caveat: a *new* machine still starts as a copy of the one currently
+  running.
+- **Next: the hard-disc panels** (attaching/creating HD images) and the small
+  per-device "Configure…" dialogs.
 
 ## What happened on 2026-07-28 (the short version)
 
@@ -80,7 +90,14 @@ wxWidgets dialogs. In M4 we rebuild those dialogs in SwiftUI, one at a time.
   not in the emulator engine.
 - Evening: the first M4 dialog landed. **Machine → Manage Machines…** in
   PCemMac now creates, copies, renames, deletes and boots machines — all
-  native SwiftUI, no wxWidgets. Give it a try when you feel like it.
+  native SwiftUI, no wxWidgets.
+- Night: the settings window followed. **Machine → Settings…** changes the
+  running machine's CPU, memory, video, sound, drives, mouse and joystick,
+  with the same "this will reset PCem" warning as the old app.
+- Late night, your call: PCemMac now starts the way the original does — the
+  machine manager opens first and nothing runs until you press **Boot**. The
+  manager also has **Configure…** to change a machine *before* it runs, and
+  shutting a machine down brings you back to the manager.
 
 ## What happened on 2026-07-27 (the short version)
 

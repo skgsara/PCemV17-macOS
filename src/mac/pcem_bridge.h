@@ -45,6 +45,11 @@ const char *pcem_bridge_current_config_name(void);
 void        pcem_bridge_use_config(int index);
 /* Same, by config name (safe against list rescans shifting indices). */
 void        pcem_bridge_use_config_named(const char *name);
+/* 1 while a machine is booted, 0 in the launcher state (nothing running). */
+int         pcem_bridge_machine_is_running(void);
+/* The NSUserDefaults "lastMachine" value ("" when unset): used to preselect
+   in the machine manager, NOT to auto-boot (launcher-first, like wx). */
+const char *pcem_bridge_remembered_config_name(void);
 
 /* ---- Machine manager (M4): file ops on configs/*.cfg ---------------------
    All return 0 = ok, 1 = name already exists, 2 = invalid name,
@@ -55,6 +60,116 @@ int  pcem_bridge_config_copy(const char *old_name, const char *new_name);
 int  pcem_bridge_config_delete(const char *name);
 /* Re-list the configs/ dir after file ops (updates count/name accessors). */
 void pcem_bridge_config_rescan(void);
+
+/* ---- Machine settings (M4 step 2) -----------------------------------------
+   Snapshot/apply API mirroring the wx settings dialog (wx-config.c): the UI
+   calls _begin (pauses emulation), reads current values with _get, edits
+   locally, then _apply (dirty-check -> reboot -> save, same sequence as
+   config_dlgsave) or _cancel. String settings (hdd controller / lpt device /
+   cd model) travel as separate const char* params so the struct stays
+   all-int and Swift-friendly. The list feeders below reproduce the wx
+   dialog's recalc_*_list filters for the SELECTED model, so the UI
+   re-queries them whenever the model selection changes. */
+typedef struct
+{
+        int model;                  /* core index into models[] */
+        int cpu_manufacturer, cpu;  /* indices within the model */
+        int fpu_index;              /* index into the CPU's FPU list */
+        int cpu_use_dynarec;
+        int cpu_waitstates;         /* 0..8, 0 = system default */
+        int mem_size;               /* KB (convert for display via model_uses_mb) */
+        int enable_sync;
+        int gfxcard;                /* old-style numbering; GFX_BUILTIN = -1 */
+        int video_speed;            /* -1..5 (-1 = default) */
+        int voodoo;
+        int sound_card;             /* index into sound_cards[] */
+        int gameblaster, gus, ssi2001;
+        int fdd_type[2];            /* 0..7 (None .. 3.5" 2.88M) */
+        int cd_speed;               /* 1..72 */
+        int mouse_type;
+        int joystick_type;
+} pcem_settings_t;
+
+void pcem_bridge_settings_begin(void);
+/* Edit mode: load config_name's settings WITHOUT booting it (the wx machine
+   manager's Configure flow: loadconfig(cfg); config_open; saveconfig(cfg)).
+   Only valid while no machine is running. Returns 1 on success. */
+int  pcem_bridge_settings_begin_edit(const char *config_name);
+void pcem_bridge_settings_get(pcem_settings_t *s);
+const char *pcem_bridge_settings_hdd_controller(void); /* internal name */
+const char *pcem_bridge_settings_lpt1_device(void);    /* internal name */
+const char *pcem_bridge_settings_cd_model(void);       /* display string */
+int  pcem_bridge_settings_would_reboot(const pcem_settings_t *s,
+        const char *hdd_controller, const char *lpt1_device);
+void pcem_bridge_settings_apply(const pcem_settings_t *s,
+        const char *hdd_controller, const char *lpt1_device,
+        const char *cd_model);
+void pcem_bridge_settings_cancel(void);
+
+/* Models (only those with ROMs present). */
+int         pcem_bridge_settings_model_count(void);
+const char *pcem_bridge_settings_model_name(int list_index);
+int         pcem_bridge_settings_model_index(int list_index); /* core index */
+/* Per-core-model info. */
+int pcem_bridge_model_min_ram(int model);
+int pcem_bridge_model_max_ram(int model);
+int pcem_bridge_model_ram_granularity(int model);
+int pcem_bridge_model_uses_mb(int model); /* display memory in MB, not KB */
+int pcem_bridge_model_has_pci(int model);
+int pcem_bridge_model_has_fixed_gfx(int model);
+int pcem_bridge_model_has_optional_gfx(int model);
+
+/* CPUs within a model. */
+int         pcem_bridge_cpu_manu_count(int model);
+const char *pcem_bridge_cpu_manu_name(int model, int manu);
+int         pcem_bridge_cpu_count(int model, int manu);
+const char *pcem_bridge_cpu_name(int model, int manu, int cpu);
+/* bit0 = supports dynarec, bit1 = requires dynarec */
+int pcem_bridge_cpu_dynarec_flags(int model, int manu, int cpu);
+int pcem_bridge_cpu_waitstates_supported(int model, int manu, int cpu);
+
+/* FPUs for a CPU. */
+int         pcem_bridge_fpu_count(int model, int manu, int cpu);
+const char *pcem_bridge_fpu_name(int model, int manu, int cpu, int index);
+
+/* Video cards filtered for the model; gfxcard value = old-style or -1. */
+int         pcem_bridge_video_count(int model);
+const char *pcem_bridge_video_name(int model, int list_index);
+int         pcem_bridge_video_gfxcard(int model, int list_index);
+
+/* Sound cards filtered for the model. */
+int         pcem_bridge_sound_count(int model);
+const char *pcem_bridge_sound_name(int model, int list_index);
+int         pcem_bridge_sound_card(int model, int list_index);
+
+/* HDD controllers filtered for the model. */
+int         pcem_bridge_hdd_count(int model);
+const char *pcem_bridge_hdd_name(int model, int list_index);
+const char *pcem_bridge_hdd_internal_name(int model, int list_index);
+
+/* LPT devices (unfiltered). */
+int         pcem_bridge_lpt_count(void);
+const char *pcem_bridge_lpt_name(int index);
+const char *pcem_bridge_lpt_internal_name(int index);
+
+/* Mice filtered for the model. */
+int         pcem_bridge_mouse_count(int model);
+const char *pcem_bridge_mouse_name(int model, int list_index);
+int         pcem_bridge_mouse_type(int model, int list_index);
+
+/* Joysticks (unfiltered; mapping buttons deferred to M5). */
+int         pcem_bridge_joystick_count(void);
+const char *pcem_bridge_joystick_name(int index);
+
+/* CD models filtered by the selected HDD controller's interface
+   (hdd_internal_name = e.g. "ide", "none", "aha1542c"). */
+int         pcem_bridge_cd_model_count(const char *hdd_internal_name);
+const char *pcem_bridge_cd_model_name(const char *hdd_internal_name, int list_index);
+/* Fixed speed for a CD model, or -1 if user-selectable. */
+int pcem_bridge_cd_model_fixed_speed(const char *cd_model_name);
+/* CD speeds (1..72, 17 entries). */
+int pcem_bridge_cd_speed_count(void);
+int pcem_bridge_cd_speed_value(int list_index);
 
 /* ---- Drives & sound (mirror the wx context-menu handlers) -----------------
    All of these are safe to call from the UI thread while emulation runs

@@ -21,13 +21,17 @@ struct MachineManagerView: View {
     }
 
     /// Boot: dismiss the sheet, release the mouse, switch the core to this
-    /// config. Done: just dismiss. Provided by the presenter (AppDelegate).
+    /// config. Configure: open the settings editor for this config WITHOUT
+    /// booting it (only while no machine is running). Done: just dismiss.
+    /// Provided by the presenter (AppDelegate).
     var onBoot: (String) -> Void
+    var onConfigure: (String) -> Void
     var onDone: () -> Void
 
     @State private var machines: [String] = []
     @State private var selection: String?
     @State private var currentName = ""
+    @State private var running = false
 
     @State private var nameAction: NameAction?
     @State private var enteredName = ""
@@ -41,7 +45,7 @@ struct MachineManagerView: View {
                     HStack {
                         Text(name)
                         Spacer()
-                        if name == currentName {
+                        if name == currentName && running {
                             Text("running")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -51,7 +55,7 @@ struct MachineManagerView: View {
                     .onTapGesture(count: 2) { onBoot(name) }
                 }
             }
-            .frame(minWidth: 320, minHeight: 240)
+            .frame(minWidth: 560, minHeight: 240)
 
             HStack {
                 Button("New…") { beginNameEntry(.new) }
@@ -65,6 +69,13 @@ struct MachineManagerView: View {
                 .disabled(selection == nil)
                 Button("Delete…") { deleteCandidate = selection }
                     .disabled(selection == nil)
+                // Configure edits a config WITHOUT booting it — only safe
+                // while no machine is running (the wx machine manager flow).
+                // For the running machine use Machine → Settings… instead.
+                Button("Configure…") {
+                    if let selection { onConfigure(selection) }
+                }
+                .disabled(selection == nil || running)
 
                 Spacer()
 
@@ -74,7 +85,7 @@ struct MachineManagerView: View {
                 Button("Done") { onDone() }
             }
 
-            Text("New machines start as a copy of the running machine's settings.")
+            Text("New machines start as a copy of the current settings.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -127,10 +138,20 @@ struct MachineManagerView: View {
             }
         }
         machines = names
+        running = pcem_bridge_machine_is_running() != 0
         currentName = pcem_bridge_current_config_name()
             .map { String(cString: $0) } ?? ""
         if let selection, !names.contains(selection) {
             self.selection = nil
+        }
+        // Launcher state: preselect the remembered (last-booted) machine.
+        if selection == nil {
+            let remembered = String(cString: pcem_bridge_remembered_config_name())
+            if names.contains(remembered) {
+                selection = remembered
+            } else if running, names.contains(currentName) {
+                selection = currentName
+            }
         }
     }
 

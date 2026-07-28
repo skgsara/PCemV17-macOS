@@ -65,6 +65,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         rebuildMachineMenu()
         emulatorView.startDisplayUpdates()
         NSApp.activate(ignoringOtherApps: true)
+
+        // Launcher-first, like the original PCem: the machine manager opens
+        // at startup and nothing boots until a machine is picked.
+        manageMachines()
     }
 
     /// The bridge calls these from arbitrary threads; they arrive on the main
@@ -116,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func guestPoweredOff() {
         pcem_bridge_stop()
         window.title = "PCem (stopped)"
+        manageMachines() // back to the launcher, like the original PCem
     }
 
     @objc private func windowDidResignKey() {
@@ -259,7 +264,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// One menu item per *.cfg in the configs folder; checkmark on the booted one.
     private func rebuildMachineMenu() {
         machineMenu.removeAllItems()
-        let current = pcem_bridge_current_config_name().map { String(cString: $0) }
+        let running = pcem_bridge_machine_is_running() != 0
+        let current = running
+            ? pcem_bridge_current_config_name().map { String(cString: $0) }
+            : nil
         for i in 0..<pcem_bridge_config_count() {
             guard let cName = pcem_bridge_config_name(i) else { continue }
             let name = String(cString: cName)
@@ -271,8 +279,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             machineMenu.addItem(item)
         }
         machineMenu.addItem(.separator())
+        machineMenu.addItem(withTitle: "Settings…",
+                            action: #selector(openSettings), keyEquivalent: "")
         machineMenu.addItem(withTitle: "Manage Machines…",
                             action: #selector(manageMachines), keyEquivalent: "")
+    }
+
+    // MARK: - Machine settings (M4 step 2: SwiftUI replacement for wx-config.c)
+
+    /// Sheet window hosting the SwiftUI settings view, while presented.
+    private var settingsWindow: NSWindow?
+
+    @objc private func openSettings() {
+        presentSettings(editMachine: nil, returnToManager: false)
+    }
+
+    /// editMachine: nil = live settings for the running machine (Machine →
+    /// Settings…); non-nil = edit that config file without booting it
+    /// (machine manager Configure…). returnToManager reopens the machine
+    /// manager sheet afterwards (Configure came from there).
+    private func presentSettings(editMachine: String?, returnToManager: Bool) {
+        emulatorView.releaseMouse()
+        let view = SettingsView(
+            editMachine: editMachine,
+            onApply: { [weak self] in
+                self?.dismissSettings(returnToManager: returnToManager)
+            },
+            onCancel: { [weak self] in
+                self?.dismissSettings(returnToManager: returnToManager)
+            })
+        let panel = NSWindow(contentViewController: NSHostingController(rootView: view))
+        panel.title = editMachine.map { "Machine Settings — \($0)" } ?? "Machine Settings"
+        settingsWindow = panel
+        window.beginSheet(panel)
+    }
+
+    private func dismissSettings(returnToManager: Bool = false) {
+        // Harmless if Apply already unpaused: cancel just clears the pause
+        // flag. Covers any dismissal path that skipped the view's buttons.
+        pcem_bridge_settings_cancel()
+        if let sheet = settingsWindow {
+            window.endSheet(sheet)
+            settingsWindow = nil
+        }
+        if returnToManager {
+            manageMachines()
+        }
     }
 
     // MARK: - Machine manager (M4: SwiftUI replacement for wx-config_sel.c)
@@ -287,6 +339,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 self.dismissMachineManager()
                 self.emulatorView.releaseMouse()
                 pcem_bridge_use_config_named(name)
+                self.rebuildMachineMenu()
+            },
+            onConfigure: { [weak self] name in
+                guard let self else { return }
+                self.dismissMachineManager()
+                self.presentSettings(editMachine: name, returnToManager: true)
             },
             onDone: { [weak self] in
                 self?.dismissMachineManager()
@@ -309,6 +367,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// in sync with the emulator's actual state every time a menu opens.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
+        case #selector(openSettings):
+            // Live settings edit the running machine; with nothing booted,
+            // use Manage Machines… → Configure… instead.
+            return pcem_bridge_machine_is_running() != 0
         case #selector(ejectFloppyA):
             return pcem_bridge_floppy_path(0).pointee != 0
         case #selector(ejectFloppyB):

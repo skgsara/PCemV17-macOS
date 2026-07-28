@@ -36,7 +36,7 @@ much as possible**. This is a multi-month effort done in milestones.
   keyboard/mouse input. New target `PCemMac` + sources in `src/mac/`. ✅ 2026-07-27
 - **M4 — Config UI in SwiftUI**: replace machine manager (`wx-config_sel.c`) and settings
   (`wx-config.c`) dialogs one at a time. 🔶 IN PROGRESS — machine manager ✅ 2026-07-28,
-  settings dialog ⬜ NEXT
+  settings dialog (minus HD slots) ✅ 2026-07-28, HD slots + device sub-dialogs ⬜ NEXT
 - **M5 — Remove wx entirely**: drop SDL/wx dependencies; optionally replace OpenAL with
   CoreAudio; CoreMIDI; app icon/signing/notarization. ⬜
 
@@ -51,10 +51,18 @@ bullet below and the 2026-07-28 entry in `docs/PORTING_LOG.md`).
 M4 step 1: the wx machine manager is replaced by a SwiftUI sheet (Machine →
 Manage Machines…): list/New/Copy/Rename/Delete/Boot via new
 `pcem_bridge_config_*` functions; view in `src/mac/MachineManagerView.swift`.
-Caveat: **New** copies the running machine's settings (the wx dialog opened the
-settings editor first; ours doesn't exist yet — that's M4 step 2).
-Per-machine *settings* still use the wx build (`PCem` target, kept as reference
-until M5). Next session: M4 step 2 (settings dialog in SwiftUI) — see
+M4 step 2 (same day): the wx settings dialog is replaced by a SwiftUI sheet
+(Machine → Settings…, `src/mac/SettingsView.swift`) covering Machine
+(model/CPU/FPU/dynarec/memory/waitstates/sync), Video, Sound, floppy types,
+CD model/speed, Mouse and Joystick — everything except the 7 hard-disc slot
+panels (M4 step 3) and the per-device "Configure…" sub-dialogs (M5). The
+bridge (`pcem_settings_t` + begin/get/apply/cancel + model-filtered list
+feeders) ports `config_dlgsave` and the `recalc_*_list` filters 1:1; apply
+dirty-checks, reboots and saves exactly like wx. Caveat from step 1 stands:
+"New" copies the running machine's settings (wx opened the settings editor
+first; wiring that up is step 3).
+Per-machine *HD slots* and device sub-dialogs still use the wx build (`PCem`
+target, kept as reference until M5). Next session: M4 step 3 — see
 "How to attack M4" below.
 
 ## How to build
@@ -97,8 +105,12 @@ Two independent build systems exist. **Both must keep working.**
     Drive/sound actions go through bridge functions that mirror the wx-sdl2.c
     handlers 1:1 (incl. `atapi_close()`, which is UI glue, not core).
     Bridge callbacks (title, video-size → window resize, guest power-off).
-    Auto-boots the last-used machine (remembered in NSUserDefaults `lastMachine`;
-    upstream has no such memory — it always showed the wx machine manager).
+    **Launcher-first, like upstream**: the machine manager opens at startup and
+    nothing boots until a machine is picked (`lastMachine` in NSUserDefaults
+    only *preselects*); guest power-off returns to the manager. The manager's
+    Configure… edits a config without booting it (bridge
+    `pcem_bridge_settings_begin_edit` — loadconfig → edit → saveconfig on the
+    file), enabled only while no machine is running.
     Mouse release: Ctrl+Option+M (MacBook-friendly) / middle-click / Ctrl+End.
   - `EmulatorView.swift` — 60 Hz `Timer` pulls frames via `pcem_bridge_copy_frame`
     into a CGImage (`noneSkipFirst|byteOrder32Little` = BGRX, zero conversion) set
@@ -166,17 +178,27 @@ Replace the wx config dialogs with SwiftUI, one at a time, in the `PCemMac` targ
    (`pcem_bridge_config_create/rename/copy/delete/rescan`,
    `pcem_bridge_use_config_named`) + SwiftUI sheet
    `src/mac/MachineManagerView.swift`, presented from Machine → Manage Machines….
-   Caveat: "New" copies the running machine's settings until step 2 exists.
-2. **Settings dialog** (`wx-config.c`, the big one) ⬜ NEXT: it reads/writes the core's
-   config via `config_get_int`/`config_set_int` (CFG_MACHINE) and globals
-   (`model`, `cpu`, `mem_size`, `gfxcard`, …). Plan: expose a small typed C API in
-   the bridge per settings section (machine, video, sound, drives) rather than
-   wrapping every key. Apply = set globals + `saveconfig(NULL)` + reboot
-   (`use_config`-style stop/boot cycle). When it exists, wire "Configure…" into
-   the machine manager sheet and make "New" open it (like wx IDC_NEW does).
-3. Device config dialogs (`wx-deviceconfig.cc`) come last; some devices have custom
+   Caveat: "New" copies the running machine's settings until step 3 wires it to
+   the settings sheet.
+2. ~~**Settings dialog** (`wx-config.c`, the big one)~~ ✅ 2026-07-28 (minus HD slots) —
+   `pcem_settings_t` + `pcem_bridge_settings_begin/get/apply/cancel` (apply =
+   port of `config_dlgsave`: dirty-check → `savenvr` → write globals →
+   `mem_alloc/loadbios/resetpchard` → `cpu_set`/`cpu_update_waitstates`/
+   `cd_set_*`/`saveconfig`/`speedchanged`/`gameport_update_joystick_type`),
+   model-filtered list feeders (ports of `recalc_*_list`), SwiftUI sheet
+   `src/mac/SettingsView.swift` (Machine → Settings…, edits the running
+   machine). Units gotcha: `mem_size` is always KB but model
+   min/max/granularity are in DISPLAY units (MB when `MODEL_AT &&
+   ram_granularity < 128`) — see `clamp_mem_size()` in the bridge.
+3. **HD slots** (the rest of the Drives page) ⬜ NEXT: 7 slots `hdc[]`/`ide_fn[]`
+   + geometry + cdrom/zip channel exclusivity + `.img`/`.vhd` image creation
+   (`hdnew_dlgproc`/`hdsize_dlgproc` in wx-config.c, minivhd).
+   (The manager's Configure… already works: `pcem_bridge_settings_begin_edit`
+   loads a config without booting it — safe because the launcher flow means
+   Configure is only enabled while nothing is running.)
+4. Device config dialogs (`wx-deviceconfig.cc`) come last; some devices have custom
    UIs — stub or defer to M5.
-4. Keep the wx `PCem` target building until M5 removes it.
+5. Keep the wx `PCem` target building until M5 removes it.
 
 Known M3 leftovers to fix when they bite: no screenshots/shaders, no joystick UI,
 MIDI stubbed, windowed-only (standard macOS fullscreen works via the green button),

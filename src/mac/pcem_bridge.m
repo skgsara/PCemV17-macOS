@@ -53,6 +53,12 @@
 #include "cdrom-ioctl.h"
 #include "ide.h"
 #include "ide_atapi.h"
+#include "mouse.h"
+#include "gameport.h"
+#include "hdd.h"
+#include "lpt.h"
+#include "fdd.h"
+#include "scsi_cd.h"
 
 #include "pcem_bridge.h"
 #include "pcem_mac_platform.h"
@@ -550,27 +556,9 @@ int pcem_bridge_start(void)
 
         scan_configs();
 
-        /* Upstream PCem leaves config_file_default empty at startup and shows
-           the wx machine manager instead. We have no startup dialog, so boot
-           the last-used machine (NSUserDefaults), else the first in the list. */
-        if (config_name[0] == 0 && config_count > 0)
-        {
-                int index = 0;
-                char saved[256];
-                if (pcem_mac_defaults_get_string("lastMachine", saved, sizeof(saved)))
-                {
-                        for (int i = 0; i < config_count; i++)
-                        {
-                                if (!strcmp(config_names[i], saved))
-                                {
-                                        index = i;
-                                        break;
-                                }
-                        }
-                }
-                select_config_by_index(index);
-                loadconfig(NULL); /* reload with the machine cfg in place */
-        }
+        /* Launcher-first, like the wx app: NO machine is booted here. The
+           machine manager appears at startup and pcem_bridge_use_config does
+           the first boot. lastMachine only preselects in the manager. */
 
         /* Availability scan, mirrors wx_start(). */
         int c, d = romset;
@@ -593,13 +581,7 @@ int pcem_bridge_start(void)
         for (c = 0; c < GFX_MAX; c++)
                 gfx_present[c] = video_card_available(video_old_to_new(c));
 
-        boot_machine();
-        sound_init();
-
         emu_done_event = thread_create_event();
-        emu_thread_start();
-
-        updatewindowsize(640, 480);
         started = 1;
         return 1;
 }
@@ -648,10 +630,12 @@ void pcem_bridge_reset(int kind)
 
 void pcem_bridge_use_config(int index)
 {
+        static int sound_inited = 0;
+
         if (!started || index < 0 || index >= config_count)
                 return;
 
-        /* stop_emulation() equivalent */
+        /* stop_emulation() equivalent (no-op when nothing is running yet) */
         emu_thread_stop();
 
         select_config_by_index(index);
@@ -659,9 +643,28 @@ void pcem_bridge_use_config(int index)
 
         loadconfig(NULL);
         boot_machine();
+        if (!sound_inited)
+        {
+                sound_init();
+                sound_inited = 1;
+        }
 
         emu_thread_start();
         updatewindowsize(640, 480);
+}
+
+int pcem_bridge_machine_is_running(void)
+{
+        return emu_running;
+}
+
+const char *pcem_bridge_remembered_config_name(void)
+{
+        static char saved[256];
+
+        if (pcem_mac_defaults_get_string("lastMachine", saved, sizeof(saved)))
+                return saved;
+        return "";
 }
 
 /* ========================================================================
@@ -980,4 +983,649 @@ void pcem_bridge_set_sound_gain(int db)
 {
         sound_gain = db;
         saveconfig(NULL);
+}
+
+/* ========================================================================
+ * Machine settings (M4 step 2) — port of the wx settings dialog
+ * (wx-config.c). The list feeders reproduce recalc_*_list (filtered by the
+ * SELECTED model); apply reproduces config_dlgsave. HD slots and device
+ * "Configure" sub-dialogs are M4 step 3 / M5.
+ * ======================================================================== */
+
+/* Edit mode: settings are loaded from a config file without booting it
+   (the wx machine manager's Configure flow). Only valid while no machine
+   is running; apply saves back to the same file and skips the reboot. */
+static char settings_edit_path[512];
+static int settings_edit_mode = 0;
+
+void pcem_bridge_settings_begin(void)
+{
+        settings_edit_mode = 0;
+        pause = 1;
+}
+
+int pcem_bridge_settings_begin_edit(const char *config_name)
+{
+        char path[512];
+
+        if (emu_running || !config_name_valid(config_name))
+                return 0;
+        config_path_for(config_name, path, sizeof(path));
+        loadconfig(path); /* fills the globals the settings UI reads */
+        strncpy(settings_edit_path, path, sizeof(settings_edit_path) - 1);
+        settings_edit_path[sizeof(settings_edit_path) - 1] = 0;
+        settings_edit_mode = 1;
+        return 1;
+}
+
+void pcem_bridge_settings_cancel(void)
+{
+        settings_edit_mode = 0;
+        pause = 0;
+}
+
+void pcem_bridge_settings_get(pcem_settings_t *s)
+{
+        int c;
+
+        memset(s, 0, sizeof(*s));
+        s->model = model;
+        s->cpu_manufacturer = cpu_manufacturer;
+        s->cpu = cpu;
+        for (c = 0; fpu_get_name_from_index(model, cpu_manufacturer, cpu, c); c++)
+        {
+                if (fpu_get_type_from_index(model, cpu_manufacturer, cpu, c) == fpu_type)
+                {
+                        s->fpu_index = c;
+                        break;
+                }
+        }
+        s->cpu_use_dynarec = cpu_use_dynarec;
+        s->cpu_waitstates = cpu_waitstates;
+        s->mem_size = mem_size;
+        s->enable_sync = enable_sync;
+        s->gfxcard = gfxcard;
+        s->video_speed = video_speed;
+        s->voodoo = voodoo_enabled;
+        s->sound_card = sound_card_current;
+        s->gameblaster = GAMEBLASTER;
+        s->gus = GUS;
+        s->ssi2001 = SSI2001;
+        s->fdd_type[0] = fdd_get_type(0);
+        s->fdd_type[1] = fdd_get_type(1);
+        s->cd_speed = cd_speed;
+        s->mouse_type = mouse_type;
+        s->joystick_type = joystick_type;
+}
+
+const char *pcem_bridge_settings_hdd_controller(void)
+{
+        return hdd_controller_name;
+}
+
+const char *pcem_bridge_settings_lpt1_device(void)
+{
+        return lpt1_device_name;
+}
+
+const char *pcem_bridge_settings_cd_model(void)
+{
+        return cd_model ? cd_model : "";
+}
+
+/* The wx dialog clamps the spin value in DISPLAY units (MB for AT machines
+   with ram_granularity < 128, else KB), then converts to KB. The struct
+   always carries KB, so convert both ways. */
+static int clamp_mem_size(int m, int mem_kb)
+{
+        int uses_mb = (models[m].flags & MODEL_AT) && models[m].ram_granularity < 128;
+        int mem = uses_mb ? mem_kb / 1024 : mem_kb;
+
+        mem &= ~(models[m].ram_granularity - 1);
+        if (mem < models[m].min_ram)
+                mem = models[m].min_ram;
+        else if (mem > models[m].max_ram)
+                mem = models[m].max_ram;
+        return uses_mb ? mem * 1024 : mem;
+}
+
+/* Dirty check = same field list as config_dlgsave (minus HD slots and
+   cdrom/zip channels, which are M4 step 3). */
+static int settings_dirty(const pcem_settings_t *s, const char *hdd, const char *lpt)
+{
+        int mem = clamp_mem_size(s->model, s->mem_size);
+        int temp_fpu = fpu_get_type_from_index(s->model, s->cpu_manufacturer,
+                                               s->cpu, s->fpu_index);
+
+        return s->model != model || s->gfxcard != gfxcard || mem != mem_size ||
+               temp_fpu != fpu_type ||
+               s->gameblaster != GAMEBLASTER || s->gus != GUS ||
+               s->ssi2001 != SSI2001 || s->sound_card != sound_card_current ||
+               s->voodoo != voodoo_enabled || s->cpu_use_dynarec != cpu_use_dynarec ||
+               s->fdd_type[0] != fdd_get_type(0) || s->fdd_type[1] != fdd_get_type(1) ||
+               s->mouse_type != mouse_type ||
+               strncmp(hdd, hdd_controller_name, sizeof(hdd_controller_name) - 1) ||
+               strcmp(lpt, lpt1_device_name);
+}
+
+int pcem_bridge_settings_would_reboot(const pcem_settings_t *s,
+        const char *hdd_controller, const char *lpt1_device)
+{
+        /* In edit mode (or otherwise with no machine running) nothing
+           reboots — apply just saves the file. */
+        return emu_running && settings_dirty(s, hdd_controller, lpt1_device);
+}
+
+void pcem_bridge_settings_apply(const pcem_settings_t *s,
+        const char *hdd_controller, const char *lpt1_device, const char *cd_model_name)
+{
+        int c;
+        int edit_mode = settings_edit_mode;
+
+        if (settings_dirty(s, hdd_controller, lpt1_device))
+        {
+                /* Same pause/sleep pattern as pcem_bridge_reset: let the emu
+                   thread park before we reconfigure under it. */
+                if (!edit_mode)
+                {
+                        pause = 1;
+                        thread_sleep(100);
+                }
+
+                savenvr();
+                model = s->model;
+                romset = model_getromset();
+                gfxcard = s->gfxcard;
+                mem_size = clamp_mem_size(s->model, s->mem_size);
+                cpu_manufacturer = s->cpu_manufacturer;
+                cpu = s->cpu;
+                fpu_type = fpu_get_type_from_index(s->model, s->cpu_manufacturer,
+                                                   s->cpu, s->fpu_index);
+                GAMEBLASTER = s->gameblaster;
+                GUS = s->gus;
+                SSI2001 = s->ssi2001;
+                sound_card_current = s->sound_card;
+                voodoo_enabled = s->voodoo;
+                cpu_use_dynarec = s->cpu_use_dynarec;
+                mouse_type = s->mouse_type;
+                strncpy(lpt1_device_name, lpt1_device, sizeof(lpt1_device_name) - 1);
+                lpt1_device_name[sizeof(lpt1_device_name) - 1] = 0;
+                fdd_set_type(0, s->fdd_type[0]);
+                fdd_set_type(1, s->fdd_type[1]);
+                strncpy(hdd_controller_name, hdd_controller, sizeof(hdd_controller_name) - 1);
+                hdd_controller_name[sizeof(hdd_controller_name) - 1] = 0;
+
+                if (!edit_mode)
+                {
+                        mem_alloc();
+                        loadbios();
+                        resetpchard();
+                }
+        }
+
+        /* The rest runs even when nothing reboot-worthy changed (wx does the
+           same: video_speed, cpu_set, waitstates, CD, joystick). */
+        video_speed = s->video_speed;
+        cpu_manufacturer = s->cpu_manufacturer;
+        cpu = s->cpu;
+        cpu_set();
+        cpu_waitstates = s->cpu_waitstates;
+        cpu_update_waitstates();
+        enable_sync = s->enable_sync;
+
+        cd_speed = s->cd_speed;
+        cd_set_speed(cd_speed);
+        /* Match the display string back to the table entry, as wx does with
+           cd_get_model(cursel). */
+        for (c = 0; c <= MAX_CD_MODEL; c++)
+        {
+                if (!strcmp(cd_get_model(c), cd_model_name))
+                {
+                        cd_model = cd_get_model(c);
+                        cd_set_model(cd_model);
+                        break;
+                }
+        }
+
+        saveconfig(edit_mode ? settings_edit_path : NULL);
+        speedchanged();
+
+        joystick_type = s->joystick_type;
+        gameport_update_joystick_type();
+
+        settings_edit_mode = 0;
+        pause = 0;
+}
+
+/* ---- List feeders (ports of the recalc_*_list filters) ------------------
+   Model-filtered lists are cached per model; the UI re-queries after every
+   model change, so a single cached "list_model" is enough (UI thread only). */
+
+static int list_model = -1;
+
+/* models with ROMs present (wx builds modeltolist/listtomodel the same way) */
+#define MAX_MODEL_LIST 128
+static int model_list[MAX_MODEL_LIST];
+static int model_list_count = 0;
+
+static void rebuild_model_list(void)
+{
+        int c;
+
+        model_list_count = 0;
+        for (c = 0; models[c].id != -1 && model_list_count < MAX_MODEL_LIST; c++)
+        {
+                if (romspresent[models[c].id])
+                        model_list[model_list_count++] = c;
+        }
+}
+
+int pcem_bridge_settings_model_count(void)
+{
+        if (!model_list_count)
+                rebuild_model_list();
+        return model_list_count;
+}
+
+const char *pcem_bridge_settings_model_name(int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_settings_model_count())
+                return "";
+        return models[model_list[list_index]].name;
+}
+
+int pcem_bridge_settings_model_index(int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_settings_model_count())
+                return -1;
+        return model_list[list_index];
+}
+
+int pcem_bridge_model_min_ram(int m)          { return models[m].min_ram; }
+int pcem_bridge_model_max_ram(int m)          { return models[m].max_ram; }
+int pcem_bridge_model_ram_granularity(int m)  { return models[m].ram_granularity; }
+int pcem_bridge_model_uses_mb(int m)
+{
+        return (models[m].flags & MODEL_AT) && models[m].ram_granularity < 128;
+}
+int pcem_bridge_model_has_pci(int m)          { return models[m].flags & MODEL_PCI; }
+int pcem_bridge_model_has_fixed_gfx(int m)    { return model_has_fixed_gfx(m); }
+int pcem_bridge_model_has_optional_gfx(int m) { return model_has_optional_gfx(m); }
+
+int pcem_bridge_cpu_manu_count(int m)
+{
+        int c = 0;
+        while (models[m].cpu[c].cpus != NULL && c < 4)
+                c++;
+        return c;
+}
+
+const char *pcem_bridge_cpu_manu_name(int m, int manu)
+{
+        if (manu < 0 || manu >= pcem_bridge_cpu_manu_count(m))
+                return "";
+        return models[m].cpu[manu].name;
+}
+
+int pcem_bridge_cpu_count(int m, int manu)
+{
+        int c = 0;
+        if (manu < 0 || manu >= pcem_bridge_cpu_manu_count(m))
+                return 0;
+        while (models[m].cpu[manu].cpus[c].cpu_type != -1)
+                c++;
+        return c;
+}
+
+const char *pcem_bridge_cpu_name(int m, int manu, int cpu)
+{
+        if (cpu < 0 || cpu >= pcem_bridge_cpu_count(m, manu))
+                return "";
+        return models[m].cpu[manu].cpus[cpu].name;
+}
+
+int pcem_bridge_cpu_dynarec_flags(int m, int manu, int cpu)
+{
+        if (cpu < 0 || cpu >= pcem_bridge_cpu_count(m, manu))
+                return 0;
+        return models[m].cpu[manu].cpus[cpu].cpu_flags;
+}
+
+int pcem_bridge_cpu_waitstates_supported(int m, int manu, int cpu)
+{
+        int type;
+        if (cpu < 0 || cpu >= pcem_bridge_cpu_count(m, manu))
+                return 0;
+        type = models[m].cpu[manu].cpus[cpu].cpu_type;
+        return type >= CPU_286 && type <= CPU_386DX;
+}
+
+int pcem_bridge_fpu_count(int m, int manu, int cpu)
+{
+        int c = 0;
+        while (fpu_get_name_from_index(m, manu, cpu, c))
+                c++;
+        return c;
+}
+
+const char *pcem_bridge_fpu_name(int m, int manu, int cpu, int index)
+{
+        const char *name = fpu_get_name_from_index(m, manu, cpu, index);
+        return name ? name : "";
+}
+
+/* video: list entries are old-style gfxcard values (GFX_BUILTIN = -1) */
+#define MAX_VID_LIST 64
+static int vid_list[MAX_VID_LIST];
+static int vid_count = 0;
+
+static void rebuild_video_list(int m)
+{
+        int c;
+        int rs = model_getromset_from_model(m);
+
+        vid_count = 0;
+        if (model_has_fixed_gfx(m))
+        {
+                vid_list[vid_count++] = GFX_BUILTIN;
+        }
+        else
+        {
+                if (model_has_optional_gfx(m))
+                        vid_list[vid_count++] = GFX_BUILTIN;
+                for (c = 0; vid_count < MAX_VID_LIST; c++)
+                {
+                        char *name = video_card_getname(c);
+                        device_t *dev;
+
+                        if (!name[0])
+                                break;
+                        dev = video_card_getdevice(c, rs);
+                        if (video_card_available(c) && gfx_present[video_new_to_old(c)] &&
+                            ((models[m].flags & MODEL_PCI) || !(dev->flags & DEVICE_PCI)) &&
+                            ((models[m].flags & MODEL_MCA) || !(dev->flags & DEVICE_MCA)) &&
+                            (!(models[m].flags & MODEL_MCA) || (dev->flags & DEVICE_MCA)))
+                                vid_list[vid_count++] = video_new_to_old(c);
+                }
+        }
+        list_model = m;
+}
+
+int pcem_bridge_video_count(int m)
+{
+        if (list_model != m)
+                rebuild_video_list(m);
+        return vid_count;
+}
+
+const char *pcem_bridge_video_name(int m, int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_video_count(m))
+                return "";
+        if (vid_list[list_index] == GFX_BUILTIN)
+                return "Built-in video";
+        return video_card_getname(video_old_to_new(vid_list[list_index]));
+}
+
+int pcem_bridge_video_gfxcard(int m, int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_video_count(m))
+                return 0;
+        return vid_list[list_index];
+}
+
+/* sound: list entries are sound_cards[] indices */
+#define MAX_SND_LIST 20
+static int snd_list[MAX_SND_LIST];
+static int snd_count = 0;
+static int snd_list_model = -1;
+
+static void rebuild_sound_list(int m)
+{
+        int c;
+
+        snd_count = 0;
+        for (c = 0; snd_count < MAX_SND_LIST; c++)
+        {
+                char *name = sound_card_getname(c);
+                device_t *dev;
+
+                if (!name[0])
+                        break;
+                if (!sound_card_available(c))
+                        continue;
+                dev = sound_card_getdevice(c);
+                if (!dev || (dev->flags & DEVICE_MCA) == (models[m].flags & MODEL_MCA))
+                        snd_list[snd_count++] = c;
+        }
+        snd_list_model = m;
+}
+
+int pcem_bridge_sound_count(int m)
+{
+        if (snd_list_model != m)
+                rebuild_sound_list(m);
+        return snd_count;
+}
+
+const char *pcem_bridge_sound_name(int m, int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_sound_count(m))
+                return "";
+        return sound_card_getname(snd_list[list_index]);
+}
+
+int pcem_bridge_sound_card(int m, int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_sound_count(m))
+                return 0;
+        return snd_list[list_index];
+}
+
+/* hdd controllers: list entries are controller indices */
+#define MAX_HDD_LIST 16
+static int hdd_list[MAX_HDD_LIST];
+static int hdd_list_count = 0;
+static int hdd_list_model = -1;
+
+static void rebuild_hdd_list(int m)
+{
+        int c;
+
+        hdd_list_count = 0;
+        for (c = 0; hdd_list_count < MAX_HDD_LIST; c++)
+        {
+                char *name = hdd_controller_get_name(c);
+                int flags;
+
+                if (!name[0])
+                        break;
+                flags = hdd_controller_get_flags(c);
+                if ((((flags & DEVICE_AT) && !(models[m].flags & MODEL_AT)) ||
+                     (flags & DEVICE_MCA) != (models[m].flags & MODEL_MCA)) && c)
+                        continue;
+                if ((((flags & DEVICE_PS1) && models[m].id != ROM_IBMPS1_2011) ||
+                     (!(flags & DEVICE_PS1) && models[m].id == ROM_IBMPS1_2011)) && c)
+                        continue;
+                if (!hdd_controller_available(c))
+                        continue;
+                hdd_list[hdd_list_count++] = c;
+        }
+        hdd_list_model = m;
+}
+
+int pcem_bridge_hdd_count(int m)
+{
+        if (hdd_list_model != m)
+                rebuild_hdd_list(m);
+        return hdd_list_count;
+}
+
+const char *pcem_bridge_hdd_name(int m, int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_hdd_count(m))
+                return "";
+        return hdd_controller_get_name(hdd_list[list_index]);
+}
+
+const char *pcem_bridge_hdd_internal_name(int m, int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_hdd_count(m))
+                return "";
+        return hdd_controller_get_internal_name(hdd_list[list_index]);
+}
+
+int pcem_bridge_lpt_count(void)
+{
+        int c = 0;
+        while (lpt_device_get_name(c))
+                c++;
+        return c;
+}
+
+const char *pcem_bridge_lpt_name(int index)
+{
+        const char *name = lpt_device_get_name(index);
+        return name ? name : "";
+}
+
+const char *pcem_bridge_lpt_internal_name(int index)
+{
+        const char *name = lpt_device_get_internal_name(index);
+        return name ? name : "";
+}
+
+/* mice: port of mouse_valid() in wx-config.c (static there) */
+static int mouse_valid_for_model(int type, int m)
+{
+        if (((type & MOUSE_TYPE_IF_MASK) == MOUSE_TYPE_PS2) &&
+            !(models[m].flags & MODEL_PS2))
+                return 0;
+        if (((type & MOUSE_TYPE_IF_MASK) == MOUSE_TYPE_AMSTRAD) &&
+            !(models[m].flags & MODEL_AMSTRAD))
+                return 0;
+        if (((type & MOUSE_TYPE_IF_MASK) == MOUSE_TYPE_OLIM24) &&
+            !(models[m].flags & MODEL_OLIM24))
+                return 0;
+        return 1;
+}
+
+#define MAX_MOUSE_LIST 20
+static int mouse_list_map[MAX_MOUSE_LIST];
+static int mouse_list_count = 0;
+static int mouse_list_model = -1;
+
+static void rebuild_mouse_list(int m)
+{
+        int c;
+
+        mouse_list_count = 0;
+        for (c = 0; mouse_list_count < MAX_MOUSE_LIST; c++)
+        {
+                char *name = mouse_get_name(c);
+                if (!name)
+                        break;
+                if (mouse_valid_for_model(mouse_get_type(c), m))
+                        mouse_list_map[mouse_list_count++] = c;
+        }
+        mouse_list_model = m;
+}
+
+int pcem_bridge_mouse_count(int m)
+{
+        if (mouse_list_model != m)
+                rebuild_mouse_list(m);
+        return mouse_list_count;
+}
+
+const char *pcem_bridge_mouse_name(int m, int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_mouse_count(m))
+                return "";
+        return mouse_get_name(mouse_list_map[list_index]);
+}
+
+int pcem_bridge_mouse_type(int m, int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_mouse_count(m))
+                return 0;
+        return mouse_list_map[list_index];
+}
+
+int pcem_bridge_joystick_count(void)
+{
+        int c = 0;
+        while (joystick_get_name(c))
+                c++;
+        return c;
+}
+
+const char *pcem_bridge_joystick_name(int index)
+{
+        const char *name = joystick_get_name(index);
+        return name ? name : "";
+}
+
+/* CD models filtered by the selected HDD controller's interface
+   (port of recalc_cd_list). List entries are cd table indices. */
+#define MAX_CD_LIST 8
+static int cd_list_map[MAX_CD_LIST];
+static int cd_list_count = 0;
+static char cd_list_hdd[16] = "";
+
+static void rebuild_cd_list(const char *hdd_internal_name)
+{
+        int c;
+        int is_ide = hdd_controller_is_ide((char *)hdd_internal_name);
+        int is_scsi = hdd_controller_is_scsi((char *)hdd_internal_name);
+
+        cd_list_count = 0;
+        for (c = 0; c <= MAX_CD_MODEL && cd_list_count < MAX_CD_LIST; c++)
+        {
+                int iface = cd_get_model_interfaces(c);
+                if (iface == CD_MODEL_INTERFACE_ALL ||
+                    (iface == CD_MODEL_INTERFACE_IDE && is_ide) ||
+                    (iface == CD_MODEL_INTERFACE_SCSI && is_scsi))
+                        cd_list_map[cd_list_count++] = c;
+        }
+        strncpy(cd_list_hdd, hdd_internal_name, sizeof(cd_list_hdd) - 1);
+        cd_list_hdd[sizeof(cd_list_hdd) - 1] = 0;
+}
+
+int pcem_bridge_cd_model_count(const char *hdd_internal_name)
+{
+        if (strcmp(cd_list_hdd, hdd_internal_name))
+                rebuild_cd_list(hdd_internal_name);
+        return cd_list_count;
+}
+
+const char *pcem_bridge_cd_model_name(const char *hdd_internal_name, int list_index)
+{
+        if (list_index < 0 || list_index >= pcem_bridge_cd_model_count(hdd_internal_name))
+                return "";
+        return cd_get_model(cd_list_map[list_index]);
+}
+
+int pcem_bridge_cd_model_fixed_speed(const char *cd_model_name)
+{
+        int c;
+        for (c = 0; c <= MAX_CD_MODEL; c++)
+        {
+                if (!strcmp(cd_get_model(c), cd_model_name))
+                        return cd_get_model_speed(c);
+        }
+        return -1;
+}
+
+int pcem_bridge_cd_speed_count(void)
+{
+        int c = 0;
+        while (cd_get_speed(c) < MAX_CD_SPEED)
+                c++;
+        return c + 1; /* include the MAX_CD_SPEED entry, as wx does */
+}
+
+int pcem_bridge_cd_speed_value(int list_index)
+{
+        return cd_get_speed(list_index);
 }

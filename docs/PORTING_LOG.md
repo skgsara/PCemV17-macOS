@@ -251,3 +251,91 @@ same day: the sheet works (create/copy/rename/delete/boot).
 
 **Next (M4 step 2)**: the settings dialog (`wx-config.c`) in SwiftUI — typed
 bridge API per section, see "How to attack M4" in AGENTS.md.
+
+---
+
+## 2026-07-28 (night) — Session 6: settings dialog in SwiftUI (M4 step 2)
+
+**Done** — the wx settings dialog (`wx-config.c`) is replaced in the `PCemMac`
+target (except HD slots + device sub-dialogs, deferred):
+- Bridge (`pcem_bridge.h/.m`): `pcem_settings_t` (all-int struct; the three
+  string settings — hdd controller / lpt device / cd model — travel as
+  separate `const char*` params so Swift never wrestles C arrays) +
+  `settings_begin` (pause) / `settings_get` / `settings_would_reboot` /
+  `settings_apply` / `settings_cancel`. Apply is a 1:1 port of
+  `config_dlgsave` (wx-config.c:496-695): dirty-check on the same field list →
+  `savenvr()` → write globals → `mem_alloc(); loadbios(); resetpchard();` →
+  the always-run tail (`cpu_set`, `cpu_update_waitstates`, `cd_set_speed/
+  model`, `saveconfig(NULL)`, `speedchanged`, `gameport_update_joystick_type`).
+- List feeders (same file): ports of `recalc_vid/snd/hdd/cd_list` and the
+  model/CPU/FPU/mouse/joystick/LPT enumerations, all filtered by the
+  SELECTED model and cached per model; the UI re-queries on model change.
+- SwiftUI `src/mac/SettingsView.swift`: Form with Machine/Video/Sound/Drives/
+  Input sections, presented from Machine → Settings… (edits the running
+  machine, like wx's IDM_CONFIG). Model change clamps dependent selections
+  (port of `on_model_changed`); Apply shows wx's "This will reset PCem!"
+  confirmation only when the dirty set is non-empty.
+
+**Gotchas hit**:
+- Owner's screenshot: the sheet rendered EMPTY (just Cancel/Apply). Cause: a
+  bare `Form` in a VStack collapses to zero size when the hosting window sizes
+  to fit content. Fix: the sheet now uses a `TabView` (Machine/Video/Sound/
+  Drives/Input — mirrors the wx dialog's notebook in pc.xrc) with an explicit
+  `.frame(width: 520, height: 460)`. Verified via headless screenshot
+  (temporary auto-open + `screencapture`; debug line removed afterwards).
+- Memory units: `mem_size` is always KB, but model `min_ram`/`max_ram`/
+  `ram_granularity` are in DISPLAY units (MB when `MODEL_AT &&
+  ram_granularity < 128` — confirmed by pc.c:753). Bridge clamps in display
+  units then converts (`clamp_mem_size`), same as wx.
+- C `int fdd_type[2]` imports into Swift as a TUPLE — `$s.fdd_type.0` doesn't
+  compile; needs an explicit get/set Binding.
+- SwiftUI `Toggle("x", binding)` needs `isOn:`; Stepper `step:` for Int32
+  needs `Int(...)` (Stride is Int).
+
+**Verification**: PCemMac + PCem (wx) schemes build clean; autotools `make`
+untouched; 15 s smoke run boots ms-dos-5. Sheet behavior (change memory/CPU/
+video card, Apply → reboot, persistence in the .cfg) to be exercised by the
+owner.
+
+**Next (M4 step 3)**: HD slots (7 × `hdc[]`/`ide_fn[]`, geometry, cdrom/zip
+channel exclusivity, .img/.vhd creation) + "Configure…" in the machine
+manager — see "How to attack M4" in AGENTS.md.
+
+---
+
+## 2026-07-28 (late night) — Session 7: launcher-first + Configure before boot
+
+**Owner feedback**: the original PCem opens its machine manager first and
+machines are configured *before* they run; PCemMac auto-booting a machine and
+editing settings live felt wrong. She picked **launcher-first** (over keeping
+auto-boot or a hybrid).
+
+**Done**:
+- `pcem_bridge_start` no longer boots a machine — it only inits the core +
+  ROM/gfx availability scan. First boot happens in `pcem_bridge_use_config`
+  (which now also owns the one-time `sound_init`).
+- App opens the machine manager sheet at launch; Boot (or double-click) starts
+  the machine. `lastMachine` now only *preselects* in the manager
+  (`pcem_bridge_remembered_config_name`). Guest power-off / Shut Down Machine
+  returns to the manager.
+- Machine manager gains **Configure…**: edits a config WITHOUT booting it via
+  new bridge edit mode `pcem_bridge_settings_begin_edit(name)`
+  (loadconfig(cfg) → same Settings sheet → apply saves back to the same file,
+  skipping the reboot calls — mirroring wx's `has_been_inited == 0` path).
+  Enabled only while no machine is running; Machine → Settings… (live edit of
+  the running machine) is disabled while nothing runs (`validateMenuItem`).
+- `settings_would_reboot` now returns dirty && running, so edit-mode Apply
+  saves without the "This will reset PCem!" alert.
+- New bridge: `pcem_bridge_machine_is_running()`.
+
+**Bugs fixed en route**: `#selector(openSettings)` went ambiguous after
+overloading — renamed the private one to `presentSettings`. Machine-manager
+button row truncated with 7 buttons → widened the sheet to 560 pt. "New
+machines…" caption reworded (no machine is running at launcher time).
+
+**Verification**: PCemMac builds; headless screenshots confirm the manager
+opens at launch with ms-dos-5 preselected and all buttons visible, and nothing
+boots until Boot is pressed. Interactive flow (Configure before boot, live
+Settings…, shutdown → back to manager) to be exercised by the owner.
+
+**Next (M4 step 3)**: HD slots — unchanged, see "How to attack M4" in AGENTS.md.
