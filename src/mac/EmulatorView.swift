@@ -10,6 +10,7 @@ final class EmulatorView: NSView {
 
     private(set) var mouseCaptured = false
     private var displayTimer: Timer?
+    private var trackingArea: NSTrackingArea?
     /// Reusable buffer the bridge copies frames into (max 2048x2048x4).
     private let frameBuffer: UnsafeMutablePointer<UInt8>
 
@@ -28,6 +29,19 @@ final class EmulatorView: NSView {
     deinit { frameBuffer.deallocate() }
 
     override var acceptsFirstResponder: Bool { true }
+
+    /// Without a tracking area, AppKit only sends us *drag* events — plain
+    /// finger movement on a touchpad produces mouseMoved events that never
+    /// reach the view (this made the guest cursor move only while pressing).
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = trackingArea { removeTrackingArea(area) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseMoved, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        trackingArea = area
+    }
 
     // MARK: - Frame display
 

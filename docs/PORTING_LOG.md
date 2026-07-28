@@ -176,3 +176,43 @@ renderer), Screenshot, Machine status window.
 machine booting at 100%. Menu actions themselves to be exercised by owner.
 
 **Next (M4)**: SwiftUI config UI — see "How to attack M4" in AGENTS.md.
+
+---
+
+## 2026-07-28 — Smoke-test `PCemMac`
+
+**Done**: built the `PCemMac` scheme with `xcodebuild -scheme PCemMac -configuration Debug build`
+(clean success; one alignment warning from the linker, harmless). Launched the binary for 15 s
+and confirmed from `pcem.log` that the remembered machine (`ms-dos-5`) initializes, video starts,
+`onesec` fires, and the floppy boot begins (disk seeks on drive 0). Then launched the app bundle
+with `open` for interactive testing.
+
+**What to check**: window appears at 1× scale, MS-DOS 5 finishes booting, keyboard typing works,
+mouse capture/releases with **Ctrl+Option+M** (or middle-click / Ctrl+End), menu items respond.
+
+**Next (M4)**: SwiftUI config UI — see "How to attack M4" in AGENTS.md.
+
+---
+
+## 2026-07-28 (later) — Session 4: mouse hover fix (Windows 3.1)
+
+**Owner report**: PCemMac boots MS-DOS 5 fine and capture/release works, but in
+Windows 3.1 the guest cursor only moved *while pressing a finger on the
+touchpad* — never on plain finger movement. A/B test (agent launched both apps,
+owner drove the mouse): the wx build's mouse worked perfectly, so the bug was
+in the native shell, not the shared core.
+
+**Root cause**: AppKit only delivers `mouseMoved` events to a view that opts in
+— via an `NSTrackingArea` (or `window.acceptsMouseMovedEvents = true`).
+`EmulatorView` had neither, so only *drag* events ever arrived; a finger press
+counts as left-button-down, turning movement into `mouseDragged`, which the
+view DID receive. (The earlier "DOS works" report was keyboard-only — hover
+mouse had in fact never worked.)
+
+**Fix**: `src/mac/EmulatorView.swift` — added `updateTrackingAreas()` that
+installs an `NSTrackingArea` with `.mouseMoved + .activeAlways + .inVisibleRect`.
+
+**Verification**: owner confirmed the cursor follows the finger (no press) in
+both DOS and Windows 3.1.
+
+**Next (M4)**: SwiftUI config UI — see "How to attack M4" in AGENTS.md.

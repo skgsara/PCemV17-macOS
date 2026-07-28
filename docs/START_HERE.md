@@ -1,6 +1,6 @@
 # START HERE (read this first, any day you feel lost)
 
-*Written 2026-07-26, updated 2026-07-27. This file is for you, Sara — plain language,
+*Written 2026-07-26, updated 2026-07-28. This file is for you, Sara — plain language,
 no memory required. If a future session changes things, that session must update
 this file.*
 
@@ -10,7 +10,8 @@ You have **two working Mac apps** from the same project:
 
 - **PCemMac** (new, 2026-07-27) — the first all-Swift interface. No wxWidgets, no
   SDL. It boots the emulator, shows the screen, and handles keyboard and mouse.
-  Verified booting the AMI 486 BIOS at 100% speed.
+  Verified by you on 2026-07-28: MS-DOS 5 boots, and the mouse follows your
+  finger in both DOS and Windows 3.1.
 - **PCem** (original) — the wxWidgets interface. Still needed to *configure*
   machines; keep it until M5.
 
@@ -59,6 +60,19 @@ new menus — mount a floppy from the **Disc** menu, switch window size in
 Right now, changing a machine's settings (CPU, memory, video card…) still opens
 the old wxWidgets dialogs. In M4 we rebuild those dialogs in SwiftUI, one at a
 time — first the machine picker, then the settings window.
+
+## What happened on 2026-07-28 (the short version)
+
+- You test-drove PCemMac: MS-DOS 5 boots, keyboard works, and the new
+  **Ctrl+Option+M** mouse-release shortcut works.
+- One bug found and fixed: in Windows 3.1 the cursor only moved while you
+  *pressed* the touchpad. Cause: Mac apps must explicitly ask for mouse-move
+  events (a "tracking area"); without it only presses/drags come through.
+  One small addition to `EmulatorView.swift` fixed it.
+- You confirmed the fix: the cursor now follows your finger — no pressing —
+  in both DOS and Windows 3.1. The old wx app was our control experiment:
+  its mouse worked all along, which proved the bug was in our new shell,
+  not in the emulator engine.
 
 ## What happened on 2026-07-27 (the short version)
 

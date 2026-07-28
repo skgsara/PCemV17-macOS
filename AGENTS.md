@@ -42,9 +42,11 @@ much as possible**. This is a multi-month effort done in milestones.
 ## Current status
 
 M0–M3 done (2026-07-27). New target `PCemMac`: a native Swift/AppKit shell with **no
-SDL2 and no wxWidgets**, linking `PCemCore` via the bridge in `src/mac/`. Verified:
-builds, boots the default machine (BIOS logs + first rendered frame 656×208 seen in a
-smoke run). Owner should visually confirm MS-DOS 5 boots + keyboard/mouse work.
+SDL2 and no wxWidgets**, linking `PCemCore` via the bridge in `src/mac/`. Verified by
+the owner (2026-07-28): MS-DOS 5 boots, keyboard works, mouse capture/release works,
+and the guest cursor tracks the touchpad in both DOS and Windows 3.1 (after the
+tracking-area fix — see `EmulatorView.swift` bullet below and the 2026-07-28 entry
+in `docs/PORTING_LOG.md`).
 Machine *configuration* still uses the wx build (`PCem` target, kept as reference
 until M5). Next session: M4 (config UI in SwiftUI) — see "How to attack M4" below.
 
@@ -95,7 +97,10 @@ Two independent build systems exist. **Both must keep working.**
     into a CGImage (`noneSkipFirst|byteOrder32Little` = BGRX, zero conversion) set
     as `layer.contents`; keyboard via `keyDown/keyUp/flagsChanged`; mouse capture
     on click (`CGAssociateMouseAndMouseCursorPosition(false)` + hidden cursor),
-    release via middle-click / Ctrl+End / focus loss.
+    release via middle-click / Ctrl+End / focus loss. **Requires the
+    `NSTrackingArea`** installed in `updateTrackingAreas()` — without it AppKit
+    only delivers *drag* events and plain hover movement never reaches the view
+    (bit us on 2026-07-28: cursor moved only while pressing the touchpad).
 
 ### Threading (native shell)
 1. Emulation thread: `emu_thread_proc` in `pcem_bridge.m` (core `thread_create`),
