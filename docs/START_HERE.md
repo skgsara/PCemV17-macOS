@@ -50,6 +50,10 @@ Open a new chat in this folder and say exactly this:
 The agent will know everything: what's done, what's next, and every trap we've
 already fallen into. You do not need to remember or explain anything.
 
+When you feel up to it (no rush): run the **PCemMac** scheme and play with the
+new menus — mount a floppy from the **Disc** menu, switch window size in
+**View**, and release the mouse with **Ctrl+Option+M**.
+
 ## What M4 is (the next fun part)
 
 Right now, changing a machine's settings (CPU, memory, video card…) still opens

@@ -19,6 +19,7 @@ config.status
 config.cache
 Makefile
 /pcem
+src/pcem
 
 # Copyrighted BIOS ROM images - not distributed, supply your own
 roms/
