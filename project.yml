@@ -61,6 +61,8 @@ targets:
         excludes:
           # UI layer (lives in the PCem app target for now)
           - "wx-*"
+          # native Swift/AppKit shell (PCemMac target, added in M3)
+          - "mac/**"
           # not part of the macOS build (see src/Makefile.am)
           - ".deps/**"
           - "icons/**"
@@ -176,11 +178,67 @@ targets:
           done
           ln -sfn "$SRCROOT/pcem.cfg" "$RES_DIR/pcem.cfg"
 
+  # ---- PCemMac: native Swift/AppKit shell (M3), no SDL2/wx. Links PCemCore. ----
+  PCemMac:
+    type: application
+    platform: macOS
+    sources:
+      - src/mac
+    dependencies:
+      - target: PCemCore
+      - sdk: OpenAL.framework
+      - sdk: IOKit.framework
+      - sdk: Carbon.framework
+      - sdk: Cocoa.framework
+      - sdk: QuartzCore.framework
+      - sdk: AudioToolbox.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.pcem.PCemMac
+        CODE_SIGN_ENTITLEMENTS: macos/PCem.entitlements
+        SWIFT_OBJC_BRIDGING_HEADER: src/mac/pcem_bridge.h
+        SWIFT_VERSION: "5.0"
+        # PCemCore contains C++ objects (cdrom-image.cc); this target has no
+        # .cc files of its own, so pull in the C++ runtime explicitly.
+        OTHER_LDFLAGS:
+          - -lc++
+    info:
+      path: macos/PCemMac-Info.plist
+      properties:
+        CFBundleName: PCemMac
+        CFBundleDisplayName: PCem (native)
+        CFBundleIdentifier: $(PRODUCT_BUNDLE_IDENTIFIER)
+        CFBundleVersion: "1"
+        CFBundleShortVersionString: "17.0"
+        CFBundleExecutable: $(EXECUTABLE_NAME)
+        CFBundlePackageType: APPL
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+    # Same data-folder symlinks as the wx app: get_pcem_path() (pcem_bridge.m)
+    # returns Contents/Resources/, so all three builds share ROMs and configs.
+    postBuildScripts:
+      - name: Link PCem data folders into bundle
+        script: |
+          RES_DIR="$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME/Contents/Resources"
+          mkdir -p "$RES_DIR"
+          for item in roms nvr configs screenshots; do
+            ln -sfn "$SRCROOT/$item" "$RES_DIR/$item"
+          done
+          ln -sfn "$SRCROOT/pcem.cfg" "$RES_DIR/pcem.cfg"
+
 schemes:
   PCem:
     build:
       targets:
         PCem: all
+        PCemCore: all
+    run:
+      config: Debug
+  PCemMac:
+    build:
+      targets:
+        PCemMac: all
         PCemCore: all
     run:
       config: Debug

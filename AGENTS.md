@@ -31,20 +31,22 @@ much as possible**. This is a multi-month effort done in milestones.
 - **M1 — Xcode project**: XcodeGen-based project building the existing wx UI code into
   `PCem.app`. ✅ 2026-07-26
 - **M2 — Target split**: `PCemCore` static library + `PCem` app target (wx UI). ✅ 2026-07-26
-- **M3 — Swift shell**: new AppKit window with a Metal/CALayer renderer consuming
-  `buffer32`, replacing `wx-sdl2-display.c` / `wx-sdl2-video*.c`; AppKit keyboard/mouse
-  input replacing `wx-sdl2-keyboard.c` / `wx-sdl2-mouse.c`. Keep wx dialogs for config
-  during transition. ⬜ NEXT
+- **M3 — Swift shell**: new AppKit window with a CALayer/CGImage renderer consuming
+  `buffer32` (chose CALayer over Metal — simpler, swappable later); AppKit
+  keyboard/mouse input. New target `PCemMac` + sources in `src/mac/`. ✅ 2026-07-27
 - **M4 — Config UI in SwiftUI**: replace machine manager (`wx-config_sel.c`) and settings
-  (`wx-config.c`) dialogs one at a time. ⬜
+  (`wx-config.c`) dialogs one at a time. ⬜ NEXT
 - **M5 — Remove wx entirely**: drop SDL/wx dependencies; optionally replace OpenAL with
   CoreAudio; CoreMIDI; app icon/signing/notarization. ⬜
 
 ## Current status
 
-M0–M2 done (2026-07-26). The Xcode project builds the unmodified wxWidgets UI into
-`PCem.app`; verified booting MS-DOS 5 to DOSSHELL with working keyboard input.
-Next session should start M3 (see "How to attack M3" below).
+M0–M3 done (2026-07-27). New target `PCemMac`: a native Swift/AppKit shell with **no
+SDL2 and no wxWidgets**, linking `PCemCore` via the bridge in `src/mac/`. Verified:
+builds, boots the default machine (BIOS logs + first rendered frame 656×208 seen in a
+smoke run). Owner should visually confirm MS-DOS 5 boots + keyboard/mouse work.
+Machine *configuration* still uses the wx build (`PCem` target, kept as reference
+until M5). Next session: M4 (config UI in SwiftUI) — see "How to attack M4" below.
 
 ## How to build
 
@@ -57,24 +59,52 @@ Two independent build systems exist. **Both must keep working.**
    - `project.yml` is the source of truth; regenerate with `xcodegen` (install:
      `brew install xcodegen`). NEVER edit `PCem.xcodeproj` by hand.
    - Build: `xcodebuild -project PCem.xcodeproj -scheme PCem -configuration Debug build`
-   - The app target links `libPCemCore.a` (target `PCemCore`, all non-wx sources).
+   - Schemes/targets: `PCemCore` (static lib, all non-wx sources), `PCem` (wx app),
+     `PCemMac` (native Swift shell, added M3 — scheme `PCemMac`).
 
 ## Architecture map (as of v17 + Apple Silicon patch)
 
 ### Layers
-- **Core (platform-independent C)** — everything in `src/` EXCEPT `wx-*` files.
+- **Core (platform-independent C)** — everything in `src/` EXCEPT `wx-*` and `mac/`.
   Entry: `initpc()` / `resetpchard()` / `runpc()` / `closepc()` in `src/pc.c`.
-- **UI layer** — all `src/wx-*` files: wxWidgets dialogs + SDL2 display/input/audio glue.
-  `main()` lives in `src/wx-main.cc` → `pc_main()` in `src/wx-sdl2.c`.
+- **UI layer (wx, legacy reference)** — all `src/wx-*` files: wxWidgets dialogs + SDL2
+  display/input/audio glue. `main()` lives in `src/wx-main.cc` → `pc_main()` in
+  `src/wx-sdl2.c`.
+- **UI layer (native, M3+)** — `src/mac/`: Swift/AppKit shell, no SDL2/wx:
+  - `pcem_bridge.h` — the ONLY header Swift sees (bridging header). Plain C API:
+    lifecycle, config list/switch, input injection, frame copy, UI callbacks.
+  - `pcem_bridge.m` — satisfies the core's UI link contract (see "Coupling hazards")
+    + emulation thread (port of `mainthread()`, paced with
+    `clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)`, `timer_freq = 1e9`) + 2048×2048
+    BGRX staging framebuffer behind a mutex (port of `sdl_blit_memtoscreen`).
+    **Includes NO Apple system headers beyond libc** (see hazard below).
+  - `pcem_mac_platform.m/.h` — the ONLY file mixing frameworks with the shell:
+    NSBundle resource path, config dir listing, NSLog, `dispatch_async_f` to main.
+  - `keymap.c/.h` — macOS `NSEvent.keyCode` → PC set-1 scancode table (ported from
+    `SDLScancodeToSystemScancode` in `wx-sdl2-display.c`).
+  - `PCemMacApp.swift` — app/window/menus. Full menu bar mirroring the wx
+    context menu (`src/pc.xrc`): System / Disc / CD-ROM / Cassette / Sound,
+    plus native Machine picker and View (1×/2×/3× scale, Release Mouse).
+    Drive/sound actions go through bridge functions that mirror the wx-sdl2.c
+    handlers 1:1 (incl. `atapi_close()`, which is UI glue, not core).
+    Bridge callbacks (title, video-size → window resize, guest power-off).
+    Auto-boots the last-used machine (remembered in NSUserDefaults `lastMachine`;
+    upstream has no such memory — it always showed the wx machine manager).
+    Mouse release: Ctrl+Option+M (MacBook-friendly) / middle-click / Ctrl+End.
+  - `EmulatorView.swift` — 60 Hz `Timer` pulls frames via `pcem_bridge_copy_frame`
+    into a CGImage (`noneSkipFirst|byteOrder32Little` = BGRX, zero conversion) set
+    as `layer.contents`; keyboard via `keyDown/keyUp/flagsChanged`; mouse capture
+    on click (`CGAssociateMouseAndMouseCursorPosition(false)` + hidden cursor),
+    release via middle-click / Ctrl+End / focus loss.
 
-### Threading (3 threads)
-1. Emulation thread: SDL thread `mainthread()` (`src/wx-sdl2.c:181`), self-paced via
-   `SDL_GetTicks`, calls `runpc()` every ~10 ms.
-2. Blit thread: created by core `video.c` (`blit_thread`), copies emulated framebuffer
-   `buffer32` → `screen` via function pointer `video_blit_memtoscreen_func`.
-3. Render: on macOS driven by a wx timer (`PCEM_RENDER_WITH_TIMER`,
-   `PCEM_RENDER_TIMER_LOOP` defined in build flags), NOT a separate thread.
-   This is a known hack ("works on OSX... no idea why") — redesign in M3.
+### Threading (native shell)
+1. Emulation thread: `emu_thread_proc` in `pcem_bridge.m` (core `thread_create`),
+   self-paced, `runpc()` every ~10 ms; `onesec()` called from it each second.
+2. Blit thread: created by core `video.c` (`blit_thread`), calls bridge's
+   `mac_blit_memtoscreen` → staging buffer → `video_blit_complete()` (mandatory,
+   or the core deadlocks).
+3. Render: 60 Hz `Timer` on the main run loop (`EmulatorView`) — no render thread.
+   The old wx "render inside a wx timer callback" hack does not exist here.
 
 ### Coupling hazards (read before touching the UI/core boundary)
 - UI↔core coupling is through **globals** in `src/ibm.h` (`model`, `cpu`, `mem_size`,
@@ -93,6 +123,14 @@ Two independent build systems exist. **Both must keep working.**
 - MIDI: `plat-midi.h`; the macOS build uses the stub `wx-sdl2-midi.c`.
 - Threading primitives (`thread.h`) come from the pthread half of `wx-thread.c` —
   this file is a CORE dependency despite its name.
+- **Apple system headers collide with core names**: mach/dispatch headers typedef
+  `thread_t` and declare `thread_create()` (both in `thread.h`), unistd.h declares
+  `pause()` (core's `int pause`), and `video_blit_complete()` has no header decl
+  (declare it locally). Rule: files including core headers stay libc-only; put all
+  framework calls in a separate file (pattern: `pcem_bridge.m` vs
+  `pcem_mac_platform.m`).
+- `libPCemCore.a` contains C++ (`cdrom-image.cc`): targets without their own .cc
+  files must link `-lc++` explicitly (see `PCemMac` in project.yml).
 
 ### Apple Silicon patches already in the tree (from commit 5bb3bb4)
 - `codegen_allocator.c`: JIT arena via `mmap(MAP_JIT)` + `pthread_jit_write_protect_np`.
@@ -108,19 +146,30 @@ Two independent build systems exist. **Both must keep working.**
 - Links: SDL2, wx 3.3 (Homebrew, dynamic — the .app is NOT redistributable as-is),
   OpenAL, OpenGL, IOKit, Carbon, Cocoa, QuartzCore, AudioToolbox, pthread.
 
-## How to attack M3 (next session)
+## How to attack M4 (next session)
 
-1. Add a third target `PCemMac` (Swift AppKit app) linking `PCemCore`.
-2. Write a small ObjC/C bridge (`PCemBridge`) exposing: init, load config by name,
-   start/pause/reset/stop emulation, and a frame callback.
-3. Replace the render path: new `*-display` + `*-video` implementation that hands
-   `buffer32` contents to a Metal texture (or CALayer/CGImage first — simpler).
-   Provide `create_bitmap`/`destroy_bitmap`, `video_blit_memtoscreen_func`, blit locking.
-4. Replace input: AppKit `keyDown/keyUp` → PC scancodes into `pcem_key[272]`;
-   mouse via `CGAssociateMouseAndMouseCursorPosition` / delta tracking like
-   `wx-sdl2-mouse.c` does with SDL.
-5. Keep `soundopenal.c` (OpenAL works fine on macOS).
-6. Keep the wx-based `PCem` target working as a reference until M4/M5.
+Replace the wx config dialogs with SwiftUI, one at a time, in the `PCemMac` target:
+
+1. **Machine manager first** (`wx-config_sel.c`): the bridge already lists configs
+   and switches machines (`pcem_bridge_use_config`). Add "new / rename / delete
+   config" to the bridge (plain file ops on `configs/*.cfg` + `saveconfig(NULL)`),
+   then a SwiftUI dialog. Reference: how `wx-config_sel.c` sets
+   `config_file_default` / `config_name`.
+2. **Settings dialog** (`wx-config.c`, the big one): it reads/writes the core's
+   config via `config_get_int`/`config_set_int` (CFG_MACHINE) and globals
+   (`model`, `cpu`, `mem_size`, `gfxcard`, …). Plan: expose a small typed C API in
+   the bridge per settings section (machine, video, sound, drives) rather than
+   wrapping every key. Apply = set globals + `saveconfig(NULL)` + reboot
+   (`use_config`-style stop/boot cycle).
+3. Device config dialogs (`wx-deviceconfig.cc`) come last; some devices have custom
+   UIs — stub or defer to M5.
+4. Keep the wx `PCem` target building until M5 removes it.
+
+Known M3 leftovers to fix when they bite: no screenshots/shaders, no joystick UI,
+MIDI stubbed, windowed-only (standard macOS fullscreen works via the green button),
+stuck keys possible if the app loses focus mid-keypress (mouse is released, keys
+are not), no "create blank disc image" or machine-status windows (wx dialogs —
+M4/M5), no host-CD-drive menu item (no optical drives on modern Macs).
 
 ## Rules for every session
 
@@ -131,5 +180,6 @@ Two independent build systems exist. **Both must keep working.**
 3. Commit per milestone (ask the owner before git mutations). Small, clear commits.
 4. Minimal changes. Never refactor the emulator core "while you're in there".
 5. Keep BOTH build systems working. If you add/remove/rename a source file, update
-   `project.yml` AND `src/Makefile.am` if applicable.
+   `project.yml` AND `src/Makefile.am` if applicable. (`src/mac/` is deliberately
+   NOT in `Makefile.am` — it's the macOS-only shell.)
 6. `wx-resources.cpp` is generated from `pc.xrc` by `wxrc` — don't hand-edit.
