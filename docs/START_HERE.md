@@ -70,7 +70,7 @@ time — first the machine picker, then the settings window.
 - Then the full menu bar arrived: everything the old app's right-click menu
   could do (mount/eject floppies, CD images, ZIP, cassette, sound settings,
   reset/shutdown) now lives in proper menus. Mouse release is Ctrl+Option+M.
-- Not committed to git yet — commit happens when you say so.
+- Committed as `92efebb` ("M3: native Swift/AppKit shell") and pushed to GitHub.
 
 ## What happened on 2026-07-26 (the short version)
 
