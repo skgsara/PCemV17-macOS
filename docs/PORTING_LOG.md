@@ -695,3 +695,21 @@ the Dock).
 **Next**: owner does the Apple account checklist (script header), then run
 `macos/sign_and_notarize.sh` together and fix whatever breaks. After that
 M5 is done except joystick (needs a controller).
+
+---
+
+## 2026-07-29 — Session 14b: Release app for the owner + README for GitHub
+
+**Owner requests**: a ready-to-run Release .app, and an updated GitHub README.
+
+**Done**:
+- `xcodebuild -configuration Release` → copied to `build/release/PCemMac.app`
+  (gitignored) AND `~/Desktop/PCemMac.app`. Ad-hoc + hardened-runtime
+  signed; runs on this Mac as-is. Caveat documented: the bundle borrows
+  roms/configs from the repo via symlinks, so the repo folder must stay.
+  START_HERE gained a "Release build" line.
+- `README.md`: new intro block presenting the fork (native PCemMac app,
+  macOS supplement link); the macOS supplement section rewritten — native
+  app first (features, Xcode/XcodeGen build instructions), autotools wx
+  build demoted to "fallback", "Changes from stock v17" updated with the
+  later patches (disc.c strcpy guard, pc.c dump skip, src/mac/, project.yml).

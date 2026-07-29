@@ -1,4 +1,10 @@
 # [PCem](https://pcem-emulator.co.uk/)
+
+> **This fork** is PCem v17 ported to Apple Silicon Macs, with **PCemMac** —
+> a native macOS app (Swift/AppKit/SwiftUI, CoreAudio/CoreMIDI) replacing
+> the wxWidgets interface. See the [macOS supplement](#macos-supplement-apple-silicon-v17)
+> below. The original wxWidgets UI still builds via autotools.
+
 ## Download: [Windows](https://pcem-emulator.co.uk/files/PCemV17Win.zip)/[Linux](https://pcem-emulator.co.uk/files/PCemV17Linux.tar.gz)
 
 Latest version: <b>v17</b> [Changelog](https://pcem-emulator.co.uk/index.html)
@@ -47,25 +53,55 @@ CD-ROM support currently only accesses `/dev/cdrom`. It has not been heavily tes
 
 ## macOS supplement (Apple Silicon, v17)
 
-This repository contains PCem v17 patched to build and run on Apple Silicon Macs
-(tested on macOS 26 Tahoe, arm64).
+This repository contains PCem v17 ported to Apple Silicon Macs
+(tested on macOS 26 Tahoe, arm64) — including **PCemMac, a fully native
+macOS app** (Swift/AppKit/SwiftUI) that replaces the wxWidgets interface.
 
+### PCemMac — the native app
+
+- Native AppKit window, keyboard and mouse (click to capture,
+  Ctrl+Option+M to release), full menu bar.
+- All configuration dialogs rewritten in SwiftUI: machine manager,
+  machine settings, hard-disc images (.img/.vhd creation), per-device
+  "Configure…" dialogs.
+- Sound via **CoreAudio**, MIDI out via **CoreMIDI** (SB16/AWE32/Aztech
+  MPU-401 output can drive Mac synth apps; the app publishes a
+  "PCem Virtual Output" MIDI source).
+- No wxWidgets, no SDL2, no OpenAL — system frameworks only.
+- Not yet: joystick support, networking (as in stock macOS builds).
+
+Build it with [Homebrew](https://brew.sh)'s XcodeGen:
+
+```
+brew install xcodegen
+xcodegen                                          # generates PCem.xcodeproj from project.yml
+xcodebuild -project PCem.xcodeproj -scheme PCemMac -configuration Release build
+```
+
+then open the app from
+`~/Library/Developer/Xcode/DerivedData/PCem-*/Build/Products/Release/PCemMac.app`
+(or just open `PCem.xcodeproj` and press ⌘R). The app expects this
+repository's `roms/`, `configs/` etc. alongside it — it borrows them via
+symlinks inside the bundle, so keep the repo folder in place. Place your
+own BIOS ROM images in `roms/` (none are included, see the note above).
+`macos/sign_and_notarize.sh` produces a shareable Developer-ID-signed,
+notarized build once you have an Apple Developer account.
+
+### wxWidgets build (fallback, terminal)
+
+The original wxWidgets UI still builds via autotools.
 You will need [Homebrew](https://brew.sh) and the following libraries:
 - SDL2
 - wxWidgets 3.x
+- OpenAL (system)
 
 ```
 brew install sdl2 wxwidgets
-```
-
-Open a terminal window, navigate to the PCem directory then enter:
-```
 ./configure --enable-release-build
 make
 ```
 
-then `./pcem` to run. Place your own BIOS ROM images in the `roms/` folder
-(none are included, see the note above).
+then `./pcem` to run.
 
 ### Changes from stock v17
 
@@ -80,6 +116,13 @@ then `./pcem` to run. Place your own BIOS ROM images in the `roms/` folder
   (Cocoa requires window changes on the main thread)
 - `src/wx-thread.c` : add missing `sys/time.h` include
 - `src/wx-resources.cpp` : regenerated with wxrc from wxWidgets 3.3
+- `src/disc.c` : guard an overlapping `strcpy` (macOS fortified libc traps it)
+- `src/pc.c` : skip upstream's debug memory dumps on macOS (they crashed
+  at quit when the guest used paging)
+- `src/mac/` (new) : the native shell — C bridge to the emulator core,
+  SwiftUI configuration UI, CoreAudio/CoreMIDI backends
+- `project.yml` (new) : XcodeGen project building `PCemCore` (static lib)
+  and the `PCemMac` app
 
 ## Links
 

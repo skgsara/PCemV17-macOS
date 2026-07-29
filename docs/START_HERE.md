@@ -51,6 +51,10 @@ If the project file ever gets messed up: open Terminal in this folder and type
 - Sharing the app with other Macs needs your Apple Developer account (paid).
   The checklist and the one-command script live in
   `macos/sign_and_notarize.sh` — open it and read the header comments.
+- A ready-to-run **Release build** lives at `build/release/PCemMac.app`
+  (a copy is also on your Desktop). It starts faster than the Debug build
+  from Xcode. Note: it borrows the ROMs/configs from this folder via
+  symlinks, so don't move or delete the project folder.
 
 ## How to continue after a break (new chat session)
 
