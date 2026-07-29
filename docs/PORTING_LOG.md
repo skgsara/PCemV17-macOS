@@ -404,3 +404,10 @@ Verified by owner: FDISK sees the created 32 MB image as Disk 3;
 shutdown → Machines window → Boot works. `configs/ms-dos-5.cfg` gained a
 second HD from the test (63/16/65, `hdd_fn=…/harddisktest.img`) — left
 uncommitted, it's a local machine config.
+
+**Not a bug (confirmed by owner against the wx build)**: ms-dos-5 shows a
+"Foreign Hard Disk" (127.5 MiB) in the XTIDE boot menu and a phantom 128 MB
+disk in FDISK. It's the SAME 152 MB image seen twice — AMIBIOS via the CMOS
+setting (Hard Disk C: Type 46, CHS-clamped to 1024 cylinders) and the
+xtide_at controller via LBA (full 152.4 MiB). Guest-side config quirk, not
+a port bug. Fix if desired: AMIBIOS setup → Hard Disk C: = Not installed.
