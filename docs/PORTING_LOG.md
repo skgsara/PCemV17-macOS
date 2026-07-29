@@ -465,3 +465,36 @@ be exercised by the owner.
 **Next (M5)**: joystick axis/button mapping (`wx-joystickconfig.cc`) — the last
 wx-only UI; then removing the wx `PCem` target, CoreMIDI, optional CoreAudio,
 icon/signing. See "How to attack the rest of M5" in AGENTS.md.
+
+---
+
+## 2026-07-28 (night) — Session 10: wx target removed from Xcode (M5 slice 2)
+
+**Owner decision**: she has no game controller, so the joystick slice
+(mapping dialog + GameController host support) is DEFERRED until she has
+hardware — and with that the last reason to keep the wx target in Xcode is
+gone. Remove wx now; joystick comes back later as a native port.
+
+**Done**:
+- `project.yml`: deleted the entire `PCem` (wx) app target and its scheme.
+  The Xcode project now has exactly two targets (`PCemCore`, `PCemMac`) and
+  one scheme (`PCemMac`). Also stripped the wx/SDL-derived defines
+  (`wxDEBUG_LEVEL`, `WXUSINGDLL`, `__WXMAC__`, `__WXOSX__`,
+  `__WXOSX_COCOA__`, `_THREAD_SAFE`) and the SDL2/wx header search paths
+  from the SHARED settings block — verified first that no PCemCore source
+  references them (the only "SDL" hits in core are commented-out includes
+  and excluded slirp). `_FILE_OFFSET_BITS=64` and `/opt/homebrew` paths
+  stay.
+- The wx sources (`src/wx-*`) stay in the tree, and **autotools is
+  untouched**: `./configure && make` still produces the wx `pcem` binary,
+  which remains the fallback for joystick mapping until the native port.
+
+**Verification**: `xcodegen` regen; `xcodebuild -list` shows only PCemCore +
+PCemMac (it prints the PCemMac scheme twice — cosmetic xcodebuild quirk,
+only one .xcscheme exists on disk); clean build succeeds; autotools `make`
+"Nothing to be done" (unaffected); 12 s smoke run alive at the launcher.
+
+**Next (M5)**: CoreMIDI or app icon/signing — owner's pick. Joystick port
+when hardware exists (full how-to in AGENTS.md "How to attack the rest of
+M5", incl. the POV_X/POV_Y encoding and the `wx-sdl2-joystick.c` poll loop
+to copy).

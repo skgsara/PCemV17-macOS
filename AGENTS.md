@@ -39,19 +39,21 @@ much as possible**. This is a multi-month effort done in milestones.
   dialog, HD slots all done (device sub-dialogs moved to M5, done there).
 - **M5 — Remove wx entirely**: drop SDL/wx dependencies; optionally replace OpenAL with
   CoreAudio; CoreMIDI; app icon/signing/notarization. 🔶 IN PROGRESS — device
-  "Configure…" sub-dialogs ✅ 2026-07-28; remaining: joystick axis/button mapping
-  (`wx-joystickconfig.cc`), remove the wx `PCem` target + SDL/wx deps, CoreMIDI
-  (then un-hide `CONFIG_MIDI` items), optional OpenAL→CoreAudio, app icon/signing.
+  "Configure…" sub-dialogs ✅ 2026-07-28, wx target + SDL/wx deps removed from
+  Xcode ✅ 2026-07-28; remaining: joystick mapping + GameController (deferred —
+  needs a controller to test), CoreMIDI (then un-hide `CONFIG_MIDI` items),
+  optional OpenAL→CoreAudio, app icon/signing.
 
 ## Current status
 
-M0–M4 done; M5 in progress — device "Configure…" sub-dialogs done (2026-07-28).
-New target `PCemMac`: a native Swift/AppKit shell with **no SDL2 and no
-wxWidgets**, linking `PCemCore` via the bridge in `src/mac/`. Verified by the
-owner (2026-07-28): MS-DOS 5 boots, keyboard works, mouse capture/release
-works, and the guest cursor tracks the touchpad in both DOS and Windows 3.1
-(after the tracking-area fix — see `EmulatorView.swift` bullet below and the
-2026-07-28 entry in `docs/PORTING_LOG.md`).
+M0–M4 done; M5 in progress — device "Configure…" sub-dialogs done and the wx
+target removed from Xcode (2026-07-28). New target `PCemMac`: a native
+Swift/AppKit shell with **no SDL2 and no wxWidgets**, linking `PCemCore` via
+the bridge in `src/mac/`. Verified by the owner (2026-07-28): MS-DOS 5 boots,
+keyboard works, mouse capture/release works, and the guest cursor tracks the
+touchpad in both DOS and Windows 3.1 (after the tracking-area fix — see
+`EmulatorView.swift` bullet below and the 2026-07-28 entry in
+`docs/PORTING_LOG.md`).
 M4 step 1: the wx machine manager is replaced by a SwiftUI sheet (Machine →
 Manage Machines…): list/New/Copy/Rename/Delete/Boot via new
 `pcem_bridge_config_*` functions; view in `src/mac/MachineManagerView.swift`.
@@ -82,23 +84,30 @@ until CoreMIDI lands). Five "Configure…" buttons in the settings sheet
 PENDING selection exactly like `wx-config.c:1220-1290`; Apply dirty-checks,
 confirms "This will reset PCem!" when a machine runs, then writes +
 `saveconfig` + `resetpchard` immediately, independent of the parent sheet's
-Cancel (wx's `has_been_inited` path). **The native shell now has every
-user-visible settings feature of the wx build** except joystick axis/button
-mapping (`wx-joystickconfig.cc`, still M5).
+Cancel (wx's `has_been_inited` path).
+M5 slice 2 (2026-07-28): **the wx `PCem` target is gone from the Xcode
+project** — `project.yml` has only `PCemCore` + `PCemMac`, and the shared
+build settings no longer carry wx/SDL defines or header paths. The wx
+sources stay in the tree and **autotools still builds the wx `pcem` binary**
+(`./configure && make`) as the fallback for the one remaining wx-only
+feature: joystick axis/button mapping (`wx-joystickconfig.cc` — deferred
+until the owner has a controller to test with, then it lands as a
+GameController port + SwiftUI sheet).
 
 ## How to build
 
 Two independent build systems exist. **Both must keep working.**
 
-1. **Autotools** (original, terminal):
-   `./configure && make` — produces the `pcem` binary at repo root.
+1. **Autotools** (original, terminal — now the ONLY way to build the wx UI):
+   `./configure && make` — produces the wx `pcem` binary at repo root.
    Dependencies via Homebrew: `sdl2 wxwidgets openal-soft`.
-2. **Xcode** (added in M1):
+2. **Xcode** (added in M1; **native shell only since M5 slice 2** — no wx/SDL
+   target, no wx/SDL defines or header paths):
    - `project.yml` is the source of truth; regenerate with `xcodegen` (install:
      `brew install xcodegen`). NEVER edit `PCem.xcodeproj` by hand.
-   - Build: `xcodebuild -project PCem.xcodeproj -scheme PCem -configuration Debug build`
-   - Schemes/targets: `PCemCore` (static lib, all non-wx sources), `PCem` (wx app),
-     `PCemMac` (native Swift shell, added M3 — scheme `PCemMac`).
+   - Build: `xcodebuild -project PCem.xcodeproj -scheme PCemMac -configuration Debug build`
+   - Targets: `PCemCore` (static lib, all non-wx sources incl. `wx-thread.c`),
+     `PCemMac` (native Swift shell, the only app + scheme).
 
 ## Architecture map (as of v17 + Apple Silicon patch)
 
@@ -188,8 +197,9 @@ Two independent build systems exist. **Both must keep working.**
 - Defines: `PCEM_RENDER_WITH_TIMER`, `PCEM_RENDER_TIMER_LOOP`, `off64_t=off_t`,
   `fopen64=fopen`, `fseeko64=fseek`, `ftello64=ftell`.
 - Networking is OFF (no `USE_NETWORKING`, no slirp). Don't enable casually.
-- Links: SDL2, wx 3.3 (Homebrew, dynamic — the .app is NOT redistributable as-is),
-  OpenAL, OpenGL, IOKit, Carbon, Cocoa, QuartzCore, AudioToolbox, pthread.
+- Links (Xcode): OpenAL, IOKit, Carbon, Cocoa, QuartzCore, AudioToolbox,
+  pthread — no SDL2/wx since M5 slice 2. The autotools wx build still links
+  SDL2 + wx 3.3 (Homebrew, dynamic).
 
 ## How M4 was attacked (kept as a record; M4 is DONE)
 
@@ -219,18 +229,27 @@ The wx config dialogs were replaced with SwiftUI, one at a time, in the `PCemMac
 4. ~~Device config dialogs (`wx-deviceconfig.cc`)~~ ✅ 2026-07-28 (as M5 slice 1) —
    generic, no custom UIs needed: `pcem_bridge_devcfg_*` + `DeviceConfigView.swift`;
    five "Configure…" buttons in the settings sheet (see "Current status").
-5. Keep the wx `PCem` target building until M5 removes it.
+5. ~~Keep the wx `PCem` target building until M5 removes it.~~ Removed 2026-07-28
+   (M5 slice 2); autotools still builds the wx binary as a fallback.
 
 ## How to attack the rest of M5
 
+- ~~**Remove the wx `PCem` target**~~ ✅ 2026-07-28 (slice 2) — dropped from
+  `project.yml` along with the wx/SDL defines and header paths. Autotools keeps
+  building the wx binary; removing wx THERE is a separate owner decision (it
+  would end all wx dialog access).
 - **Joystick axis/button mapping** (`wx-joystickconfig.cc`) — the last wx-only
-  settings UI. Custom dialog (not `device_config_t`-based): axis/button
-  assignment per joystick. Suggested: typed bridge API + SwiftUI sheet from the
-  Input tab, same pattern as the device-config port.
-- **Remove the wx `PCem` target**: after joystick mapping lands, nothing
-  user-visible needs wx. Drop the target + scheme from `project.yml`, stop
-  linking SDL2/wx/OpenGL. The autotools build keeps wx — decide with the owner
-  whether to touch it (it still builds the Linux-style binary).
+  settings UI. DEFERRED until the owner has a game controller to test with
+  (2026-07-28 decision). When it lands: GameController-based `joystick_init`/
+  `joystick_poll` replacing the stubs (raw state via a mutex-protected snapshot
+  in `pcem_mac_platform.m`-style code — the bridge stays framework-free; port
+  the mapping/atan2 half of `wx-sdl2-joystick.c:104-165` verbatim), define
+  `plat_joystick_state[]`/`joysticks_present`, add GameController.framework in
+  `project.yml`, and a mapping sheet on the Input tab (wx dialog shape: Device
+  combo + one combo per emulated axis/button/POV-X/Y, POV_X=0x80000000 /
+  POV_Y=0x40000000 encoding, writes straight to `joystick_state[]`, no reset
+  needed). Mappings persist in the `[Joysticks]` cfg section — `loadconfig`/
+  `saveconfig` in `pc.c` already handle them.
 - **CoreMIDI**: implement `plat-midi.h` against CoreMIDI (replaces the
   `wx-sdl2-midi.c` stub), then stop filtering `CONFIG_MIDI` items in
   `pcem_bridge_devcfg_begin`.
