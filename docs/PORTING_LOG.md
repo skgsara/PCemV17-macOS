@@ -339,3 +339,68 @@ boots until Boot is pressed. Interactive flow (Configure before boot, live
 Settings…, shutdown → back to manager) to be exercised by the owner.
 
 **Next (M4 step 3)**: HD slots — unchanged, see "How to attack M4" in AGENTS.md.
+
+---
+
+## 2026-07-28 (late night) — Session 8: HD slots in SwiftUI (M4 step 3)
+
+**Done** — the last missing page of the wx settings dialog is replaced in the
+`PCemMac` target; the settings sheet is now feature-complete (device
+"Configure…" sub-dialogs stay deferred to M5):
+- Bridge (`pcem_bridge.h/.m`): a PENDING HD snapshot per settings session —
+  `pending_hdc[7]` / `pending_fn[7]` / pending cdrom+zip channels, taken by
+  both `settings_begin` and `settings_begin_edit`. Slot accessors
+  (`pcem_bridge_hd_slot_get/set/_path`, `_hd_set_channels`,
+  `_hdd_is_mfm`), the 46-entry `hd_types` table, and image I/O:
+  `pcem_bridge_hd_image_probe` (port of `hd_file` + `check_hd_type` +
+  `adjust_vhd_geometry_for_pcem`, minivhd; reports VHD timestamp mismatch),
+  `_hd_vhd_fix_timestamp`, `_hd_image_create` (port of `hdnew_dlgproc`'s OK
+  handler: raw/fixed/dynamic/differencing, `adjust_pcem_geometry_for_vhd`
+  for >65535-cylinder geometries) + `_hd_create_progress` (wx
+  `create_drive_pos`). `settings_dirty` gained `hd_pending_dirty()` (pending
+  vs globals = wx's `hd_changed` + channel compares); apply writes the
+  pending state into `hdc[]`/`ide_fn[]`/channels inside the reboot block
+  (wx-config.c:631-653). Persistence needed nothing new — `saveconfig` in
+  pc.c already stores those globals.
+- `src/mac/SettingsView.swift`: new "Hard Discs" tab — scrollable list of 7
+  slots, segmented type picker (Hard drive/CD-ROM/ZIP, exclusivity ported
+  from `hd_combodrivetype`), geometry fields + live MB label, editable path,
+  Choose…/New…/Eject. Type pickers disabled for MFM controllers (wx
+  `hdconf_update`); CD-ROM/ZIP slots show a caption (media mounts live in
+  the menu bar). Local state syncs to the bridge pending snapshot in
+  `applyTapped()` before `would_reboot`, so HD-only changes also trigger
+  the "This will reset PCem!" prompt.
+- `src/mac/HardDiscSheets.swift` (new): `NewHardDiscSheet` (port of HdNewDlg —
+  NSSavePanel, format/block-size pickers, type table, geometry↔size↔type
+  cross-updates, wx validation messages, background create with polled
+  ProgressView, "remember to partition and format" / differencing-parent
+  warnings) and `ConfirmGeometrySheet` (port of HdSizeDlg after probing an
+  existing image). Timestamp-mismatch alert offers Fix, like wx.
+
+**Verification**: `xcodegen` regen; PCemMac + PCem (wx) schemes build clean;
+autotools `make` untouched. Headless screenshot (temporary auto-open +
+tab reorder, both reverted) confirms the tab renders and loads ms-dos-5's
+real slot (17/15/1224, 152 MB, image path). 15 s smoke run: no crash at
+the launcher. Interactive flow (create an image, Apply → reboot, values in
+the .cfg, FDISK sees the drive) to be exercised by the owner.
+
+**Next**: M4 is done except device "Configure…" sub-dialogs
+(`wx-deviceconfig.cc`, some with custom UIs) — deferred to M5 (remove wx).
+
+**Owner testing (same night) — two bugs found, both fixed**:
+1. New-image sheet: picking a drive Type snapped back to "Custom" and zeroed
+   the geometry. Cause: stored `sizeMB`/`typeIndex` + `onChange` both ways
+   made a feedback loop (geometry → size → re-rounded geometry → …) that
+   decayed to 0; wx avoids it because programmatic SETTEXT doesn't re-fire
+   its edit handlers. Fix: size and type are now COMPUTED Bindings over the
+   geometry (no stored copies) in both sheets (`HardDiscSheets.swift`).
+2. Boot after System → Shut Down Machine did nothing (window stuck at
+   "PCem (stopped)"). Cause: `pcem_bridge_stop()` cleared `started`, and
+   `pcem_bridge_use_config()` refuses to run when `!started`. `started`
+   means "initpc() ran", not "thread is up" — stop no longer clears it.
+   (Pre-existing from session 7's launcher-first change; the shutdown path
+   had never been exercised.)
+Verified by owner: FDISK sees the created 32 MB image as Disk 3;
+shutdown → Machines window → Boot works. `configs/ms-dos-5.cfg` gained a
+second HD from the test (63/16/65, `hdd_fn=…/harddisktest.img`) — left
+uncommitted, it's a local machine config.

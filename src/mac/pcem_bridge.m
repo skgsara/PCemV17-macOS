@@ -60,6 +60,8 @@
 #include "fdd.h"
 #include "scsi_cd.h"
 
+#include "minivhd/minivhd.h"
+
 #include "pcem_bridge.h"
 #include "pcem_mac_platform.h"
 
@@ -591,7 +593,10 @@ void pcem_bridge_stop(void)
         if (!started)
                 return;
         emu_thread_stop();
-        started = 0;
+        /* NOTE: started stays 1 — it means "initpc() has run", not "the
+           emulation thread is up". Clearing it here made Boot a no-op after
+           a guest shutdown, because pcem_bridge_use_config refuses to run
+           when !started (bug found 2026-07-28). */
 }
 
 void pcem_bridge_quit(void)
@@ -988,8 +993,8 @@ void pcem_bridge_set_sound_gain(int db)
 /* ========================================================================
  * Machine settings (M4 step 2) — port of the wx settings dialog
  * (wx-config.c). The list feeders reproduce recalc_*_list (filtered by the
- * SELECTED model); apply reproduces config_dlgsave. HD slots and device
- * "Configure" sub-dialogs are M4 step 3 / M5.
+ * SELECTED model); apply reproduces config_dlgsave. Device "Configure"
+ * sub-dialogs are M5.
  * ======================================================================== */
 
 /* Edit mode: settings are loaded from a config file without booting it
@@ -998,10 +1003,33 @@ void pcem_bridge_set_sound_gain(int db)
 static char settings_edit_path[512];
 static int settings_edit_mode = 0;
 
+/* Pending HD slot state (M4 step 3), snapshotted at settings_begin /
+   _begin_edit and written back by settings_apply — the wx dialog's IDC_EDIT_*
+   fields play the same role: edits stay local until OK. */
+static PcemHDC pending_hdc[PCEM_HD_SLOTS];
+static char pending_fn[PCEM_HD_SLOTS][512];
+static int pending_cdrom_channel = -1;
+static int pending_zip_channel = -1;
+
+static void hd_snapshot(void)
+{
+        int c;
+
+        for (c = 0; c < PCEM_HD_SLOTS; c++)
+        {
+                pending_hdc[c] = hdc[c];
+                strncpy(pending_fn[c], ide_fn[c], sizeof(pending_fn[c]) - 1);
+                pending_fn[c][sizeof(pending_fn[c]) - 1] = 0;
+        }
+        pending_cdrom_channel = cdrom_channel;
+        pending_zip_channel = zip_channel;
+}
+
 void pcem_bridge_settings_begin(void)
 {
         settings_edit_mode = 0;
         pause = 1;
+        hd_snapshot();
 }
 
 int pcem_bridge_settings_begin_edit(const char *config_name)
@@ -1015,6 +1043,7 @@ int pcem_bridge_settings_begin_edit(const char *config_name)
         strncpy(settings_edit_path, path, sizeof(settings_edit_path) - 1);
         settings_edit_path[sizeof(settings_edit_path) - 1] = 0;
         settings_edit_mode = 1;
+        hd_snapshot();
         return 1;
 }
 
@@ -1089,8 +1118,26 @@ static int clamp_mem_size(int m, int mem_kb)
         return uses_mb ? mem * 1024 : mem;
 }
 
-/* Dirty check = same field list as config_dlgsave (minus HD slots and
-   cdrom/zip channels, which are M4 step 3). */
+/* Port of the wx dirty flags hd_changed / cdrom_channel != new_cdrom_channel /
+   zip_channel != new_zip_channel (config_dlgsave, wx-config.c:594-595):
+   comparing the pending snapshot against the globals covers them all. */
+static int hd_pending_dirty(void)
+{
+        int c;
+
+        for (c = 0; c < PCEM_HD_SLOTS; c++)
+        {
+                if (pending_hdc[c].spt != hdc[c].spt ||
+                    pending_hdc[c].hpc != hdc[c].hpc ||
+                    pending_hdc[c].tracks != hdc[c].tracks ||
+                    strcmp(pending_fn[c], ide_fn[c]))
+                        return 1;
+        }
+        return pending_cdrom_channel != cdrom_channel ||
+               pending_zip_channel != zip_channel;
+}
+
+/* Dirty check = same field list as config_dlgsave. */
 static int settings_dirty(const pcem_settings_t *s, const char *hdd, const char *lpt)
 {
         int mem = clamp_mem_size(s->model, s->mem_size);
@@ -1105,7 +1152,8 @@ static int settings_dirty(const pcem_settings_t *s, const char *hdd, const char 
                s->fdd_type[0] != fdd_get_type(0) || s->fdd_type[1] != fdd_get_type(1) ||
                s->mouse_type != mouse_type ||
                strncmp(hdd, hdd_controller_name, sizeof(hdd_controller_name) - 1) ||
-               strcmp(lpt, lpt1_device_name);
+               strcmp(lpt, lpt1_device_name) ||
+               hd_pending_dirty();
 }
 
 int pcem_bridge_settings_would_reboot(const pcem_settings_t *s,
@@ -1155,6 +1203,16 @@ void pcem_bridge_settings_apply(const pcem_settings_t *s,
                 strncpy(hdd_controller_name, hdd_controller, sizeof(hdd_controller_name) - 1);
                 hdd_controller_name[sizeof(hdd_controller_name) - 1] = 0;
 
+                /* HD slots + cdrom/zip channels (wx-config.c:631-653). */
+                for (c = 0; c < PCEM_HD_SLOTS; c++)
+                {
+                        hdc[c] = pending_hdc[c];
+                        strncpy(ide_fn[c], pending_fn[c], sizeof(ide_fn[c]) - 1);
+                        ide_fn[c][sizeof(ide_fn[c]) - 1] = 0;
+                }
+                cdrom_channel = pending_cdrom_channel;
+                zip_channel = pending_zip_channel;
+
                 if (!edit_mode)
                 {
                         mem_alloc();
@@ -1195,6 +1253,369 @@ void pcem_bridge_settings_apply(const pcem_settings_t *s,
 
         settings_edit_mode = 0;
         pause = 0;
+}
+
+/* ---- Hard-disc slots (M4 step 3) ------------------------------------------
+   Ports of the wx HD page helpers: hd_types + check_hd_type (geometry
+   heuristics), hd_file (probe), hdnew_dlgproc's OK handler (create),
+   adjust_*_geometry (VHD layout fixups). */
+
+void pcem_bridge_hd_slot_get(int slot, int *spt, int *hpc, int *cyl)
+{
+        if (slot < 0 || slot >= PCEM_HD_SLOTS)
+                return;
+        *spt = pending_hdc[slot].spt;
+        *hpc = pending_hdc[slot].hpc;
+        *cyl = pending_hdc[slot].tracks;
+}
+
+const char *pcem_bridge_hd_slot_path(int slot)
+{
+        if (slot < 0 || slot >= PCEM_HD_SLOTS)
+                return "";
+        return pending_fn[slot];
+}
+
+void pcem_bridge_hd_slot_set(int slot, int spt, int hpc, int cyl, const char *path)
+{
+        if (slot < 0 || slot >= PCEM_HD_SLOTS)
+                return;
+        pending_hdc[slot].spt = spt;
+        pending_hdc[slot].hpc = hpc;
+        pending_hdc[slot].tracks = cyl;
+        strncpy(pending_fn[slot], path, sizeof(pending_fn[slot]) - 1);
+        pending_fn[slot][sizeof(pending_fn[slot]) - 1] = 0;
+}
+
+int pcem_bridge_hd_cdrom_channel(void)
+{
+        return pending_cdrom_channel;
+}
+
+int pcem_bridge_hd_zip_channel(void)
+{
+        return pending_zip_channel;
+}
+
+void pcem_bridge_hd_set_channels(int cdrom, int zip)
+{
+        pending_cdrom_channel = cdrom;
+        pending_zip_channel = zip;
+}
+
+int pcem_bridge_hdd_is_mfm(const char *internal_name)
+{
+        return hdd_controller_is_mfm((char *)internal_name);
+}
+
+/* The 46-entry AT BIOS drive-type table (wx-config.c:1408). */
+static const struct { int cylinders, heads; } hd_types[] =
+{
+        {306,  4},  {615, 4},   {615,  6},  {940,  8},
+        {940,  6},  {615, 4},   {462,  8},  {733,  5},
+        {900, 15},  {820, 3},   {855,  5},  {855,  7},
+        {306,  8},  {733, 7},     {0,  0},  {612,  4},
+        {977,  5},  {977, 7},  {1024,  7},  {733,  5},
+        {733,  7},  {733, 5},   {306,  4},  {925,  7},
+        {925,  9},  {754, 7},   {754, 11},  {699,  7},
+        {823, 10},  {918, 7},  {1024, 11}, {1024, 15},
+        {1024, 5},  {612, 2},  {1024,  9}, {1024,  8},
+        {615,  8},  {987, 3},   {462,  7},  {820,  6},
+        {977,  5},  {981, 5},   {830,  7},  {830, 10},
+        {917, 15}, {1224, 15}
+};
+
+int pcem_bridge_hd_type_count(void)
+{
+        return 46;
+}
+
+void pcem_bridge_hd_type_get(int index, int *cylinders, int *heads)
+{
+        if (index < 0 || index >= 46)
+                return;
+        *cylinders = hd_types[index].cylinders;
+        *heads = hd_types[index].heads;
+}
+
+/* Port of check_hd_type (wx-config.c:1465): guess a geometry from the raw
+   file size. MFM controllers only understand 17-sector type-table drives. */
+static void hd_guess_geometry(int64_t sz, int is_mfm, int *spt, int *hpc, int *cyl)
+{
+        int c;
+
+        if (is_mfm)
+        {
+                for (c = 0; c < 46; c++)
+                {
+                        if ((hd_types[c].cylinders * hd_types[c].heads * 17 * 512) == sz)
+                        {
+                                *spt = 17;
+                                *hpc = hd_types[c].heads;
+                                *cyl = hd_types[c].cylinders;
+                                return;
+                        }
+                }
+                *spt = 63;
+                *hpc = 16;
+                *cyl = (int)(((sz / 512) / 16) / 63);
+                return;
+        }
+
+        if ((sz % 17) == 0 && sz <= 142606336)
+        {
+                *spt = 17;
+                if (sz <= 26738688)
+                        *hpc = 4;
+                else if ((sz % 3072) == 0 && sz <= 53477376)
+                        *hpc = 6;
+                else
+                {
+                        for (c = 5; c < 16; c++)
+                        {
+                                if ((sz % (c * 512)) == 0 && sz <= 1024*c*17*512)
+                                        break;
+                                if (c == 5)
+                                        c++;
+                        }
+                        *hpc = c;
+                }
+                *cyl = (int)((sz / 512) / *hpc) / 17;
+        }
+        else
+        {
+                *spt = 63;
+                *hpc = 16;
+                *cyl = (int)(((sz / 512) / 16) / 63);
+        }
+}
+
+/* Port of adjust_vhd_geometry_for_pcem (wx-config.c:1612): VHDs laid out
+   with >63 sectors/track are re-laid as 63/16 for PCem. */
+static void hd_adjust_vhd_geometry_for_pcem(int *spt, int *hpc, int *cyl)
+{
+        int desired_sectors, remainder;
+
+        if (*spt <= 63)
+                return;
+        desired_sectors = *cyl * *hpc * *spt;
+        if (desired_sectors > 267321600)
+                desired_sectors = 267321600;
+        remainder = desired_sectors % 85680; /* LCM of 63*16 and 255*16 */
+        if (remainder > 0)
+                desired_sectors -= remainder;
+        *cyl = desired_sectors / (16 * 63);
+        *hpc = 16;
+        *spt = 63;
+}
+
+/* Port of adjust_pcem_geometry_for_vhd (wx-config.c:1590): geometries with
+   >65535 cylinders are rounded UP to a VHD-compatible layout; the VHD itself
+   stores 255 spt while PCem sees 63/16. */
+static void hd_adjust_pcem_geometry_for_vhd(int *spt, int *hpc, int *cyl,
+        MVHDGeom *vhd_geometry)
+{
+        int desired_sectors, remainder;
+
+        if (*cyl <= 65535)
+                return;
+        desired_sectors = *cyl * *hpc * *spt;
+        if (desired_sectors > 267321600)
+                desired_sectors = 267321600;
+        remainder = desired_sectors % 85680;
+        if (remainder > 0)
+                desired_sectors += (85680 - remainder);
+        *cyl = desired_sectors / (16 * 63);
+        *hpc = 16;
+        *spt = 63;
+        vhd_geometry->cyl = desired_sectors / (16 * 255);
+        vhd_geometry->heads = 16;
+        vhd_geometry->spt = 255;
+}
+
+int pcem_bridge_hd_image_probe(const char *path, int is_mfm,
+        int *spt, int *hpc, int *cyl, int *is_vhd, int *timestamp_mismatch,
+        char *errbuf, int errbuf_size)
+{
+        FILE *f = fopen(path, "rb");
+        int64_t sz;
+
+        if (!f)
+                return 1;
+        *timestamp_mismatch = 0;
+
+        if (mvhd_file_is_vhd(f))
+        {
+                MVHDMeta *vhd;
+                MVHDGeom geom;
+                int vhd_error = 0;
+
+                fclose(f);
+                *is_vhd = 1;
+                vhd = mvhd_open(path, false, &vhd_error);
+                if (vhd == NULL)
+                {
+                        if (errbuf && errbuf_size > 0)
+                                snprintf(errbuf, errbuf_size, "%s", mvhd_strerr(vhd_error));
+                        return 2;
+                }
+                /* Like wx's hd_file: report the mismatch but still hand back
+                   the geometry; the UI decides whether to fix or abort. */
+                if (vhd_error == MVHD_ERR_TIMESTAMP)
+                        *timestamp_mismatch = 1;
+                geom = mvhd_get_geometry(vhd);
+                *cyl = geom.cyl;
+                *hpc = geom.heads;
+                *spt = geom.spt;
+                mvhd_close(vhd);
+                hd_adjust_vhd_geometry_for_pcem(spt, hpc, cyl);
+                return 0;
+        }
+
+        *is_vhd = 0;
+        fseeko(f, -1, SEEK_END);
+        sz = ftello(f) + 1;
+        fclose(f);
+        hd_guess_geometry(sz, is_mfm, spt, hpc, cyl);
+        return 0;
+}
+
+int pcem_bridge_hd_vhd_fix_timestamp(const char *path)
+{
+        MVHDMeta *vhd;
+        int vhd_error = 0;
+        int res;
+
+        vhd = mvhd_open(path, false, &vhd_error);
+        if (vhd == NULL)
+                return 1;
+        res = mvhd_diff_update_par_timestamp(vhd, &vhd_error);
+        mvhd_close(vhd);
+        return res == 0 ? 0 : 1;
+}
+
+/* Progress for image creation (wx create_drive_pos + vhd_progress_callback):
+   -1 idle, else 0..total-1. */
+static volatile int hd_create_pos = -1;
+static volatile int hd_create_total = 0;
+
+static void vhd_progress_trampoline(uint32_t current_sector, uint32_t total_sectors)
+{
+        (void)total_sectors;
+        hd_create_pos = (int)current_sector;
+}
+
+int pcem_bridge_hd_create_progress(void)
+{
+        int pos = hd_create_pos;
+        int total = hd_create_total;
+
+        if (pos < 0 || total <= 0)
+                return -1;
+        return pos * 100 / total;
+}
+
+int pcem_bridge_hd_image_create(const char *path, int spt, int hpc, int cyl,
+        int format, int block_large, const char *parent_path,
+        int *out_spt, int *out_hpc, int *out_cyl)
+{
+        int ok = 0;
+        int g_spt = spt, g_hpc = hpc, g_cyl = cyl;
+
+        *out_spt = spt;
+        *out_hpc = hpc;
+        *out_cyl = cyl;
+        hd_create_total = spt * hpc * cyl;
+        hd_create_pos = 0;
+
+        if (format == 0) /* Raw .img — port of create_drive_raw */
+        {
+                FILE *f = fopen(path, "wb");
+                uint8_t buf[512];
+                int c, total = cyl * hpc * spt;
+
+                if (!f)
+                {
+                        hd_create_pos = -1;
+                        return 1;
+                }
+                memset(buf, 0, sizeof(buf));
+                for (c = 0; c < total; c++)
+                {
+                        hd_create_pos = c;
+                        fwrite(buf, 512, 1, f);
+                }
+                fclose(f);
+                ok = 1;
+        }
+        else if (format == 1 || format == 2) /* Fixed / dynamic VHD */
+        {
+                MVHDGeom geometry = { .cyl = cyl, .heads = hpc, .spt = spt };
+                MVHDMeta *vhd = NULL;
+                int vhd_error = 0;
+
+                hd_adjust_pcem_geometry_for_vhd(&g_spt, &g_hpc, &g_cyl, &geometry);
+                *out_spt = g_spt;
+                *out_hpc = g_hpc;
+                *out_cyl = g_cyl;
+
+                if (format == 1)
+                        vhd = mvhd_create_fixed(path, geometry, &vhd_error,
+                                                vhd_progress_trampoline);
+                else
+                {
+                        MVHDCreationOptions options;
+
+                        memset(&options, 0, sizeof(options));
+                        options.block_size_in_sectors = block_large ? MVHD_BLOCK_LARGE : MVHD_BLOCK_SMALL;
+                        options.path = (char *)path;
+                        options.size_in_bytes = 0;
+                        options.geometry = geometry;
+                        options.type = MVHD_TYPE_DYNAMIC;
+                        vhd = mvhd_create_ex(options, &vhd_error);
+                }
+                if (vhd)
+                {
+                        mvhd_close(vhd);
+                        ok = 1;
+                }
+        }
+        else /* format 3 — differencing VHD, geometry comes from the parent */
+        {
+                MVHDCreationOptions options;
+                MVHDMeta *vhd;
+                int vhd_error = 0;
+
+                memset(&options, 0, sizeof(options));
+                options.block_size_in_sectors = block_large ? MVHD_BLOCK_LARGE : MVHD_BLOCK_SMALL;
+                options.path = (char *)path;
+                options.parent_path = (char *)parent_path;
+                options.type = MVHD_TYPE_DIFF;
+                vhd = mvhd_create_ex(options, &vhd_error);
+                if (vhd)
+                {
+                        MVHDGeom vhd_geom = mvhd_get_geometry(vhd);
+
+                        if (vhd_geom.spt > 63)
+                        {
+                                *out_cyl = mvhd_calc_size_sectors(&vhd_geom) / (16 * 63);
+                                *out_hpc = 16;
+                                *out_spt = 63;
+                        }
+                        else
+                        {
+                                *out_cyl = vhd_geom.cyl;
+                                *out_hpc = vhd_geom.heads;
+                                *out_spt = vhd_geom.spt;
+                        }
+                        mvhd_close(vhd);
+                        ok = 1;
+                }
+        }
+
+        hd_create_pos = -1;
+        hd_create_total = 0;
+        return ok ? 0 : 2;
 }
 
 /* ---- List feeders (ports of the recalc_*_list filters) ------------------

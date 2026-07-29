@@ -36,13 +36,14 @@ much as possible**. This is a multi-month effort done in milestones.
   keyboard/mouse input. New target `PCemMac` + sources in `src/mac/`. ✅ 2026-07-27
 - **M4 — Config UI in SwiftUI**: replace machine manager (`wx-config_sel.c`) and settings
   (`wx-config.c`) dialogs one at a time. 🔶 IN PROGRESS — machine manager ✅ 2026-07-28,
-  settings dialog (minus HD slots) ✅ 2026-07-28, HD slots + device sub-dialogs ⬜ NEXT
+  settings dialog ✅ 2026-07-28, HD slots ✅ 2026-07-28, device sub-dialogs ⬜ (M5)
 - **M5 — Remove wx entirely**: drop SDL/wx dependencies; optionally replace OpenAL with
   CoreAudio; CoreMIDI; app icon/signing/notarization. ⬜
 
 ## Current status
 
-M0–M3 done (2026-07-27); M4 step 1 done (2026-07-28). New target `PCemMac`: a native
+M0–M3 done (2026-07-27); M4 steps 1–3 done (2026-07-28) — only the per-device
+"Configure…" sub-dialogs remain, deferred to M5. New target `PCemMac`: a native
 Swift/AppKit shell with **no SDL2 and no wxWidgets**, linking `PCemCore` via the
 bridge in `src/mac/`. Verified by the owner (2026-07-28): MS-DOS 5 boots, keyboard
 works, mouse capture/release works, and the guest cursor tracks the touchpad in
@@ -54,16 +55,23 @@ Manage Machines…): list/New/Copy/Rename/Delete/Boot via new
 M4 step 2 (same day): the wx settings dialog is replaced by a SwiftUI sheet
 (Machine → Settings…, `src/mac/SettingsView.swift`) covering Machine
 (model/CPU/FPU/dynarec/memory/waitstates/sync), Video, Sound, floppy types,
-CD model/speed, Mouse and Joystick — everything except the 7 hard-disc slot
-panels (M4 step 3) and the per-device "Configure…" sub-dialogs (M5). The
+CD model/speed, Mouse and Joystick. The
 bridge (`pcem_settings_t` + begin/get/apply/cancel + model-filtered list
 feeders) ports `config_dlgsave` and the `recalc_*_list` filters 1:1; apply
 dirty-checks, reboots and saves exactly like wx. Caveat from step 1 stands:
 "New" copies the running machine's settings (wx opened the settings editor
-first; wiring that up is step 3).
-Per-machine *HD slots* and device sub-dialogs still use the wx build (`PCem`
-target, kept as reference until M5). Next session: M4 step 3 — see
-"How to attack M4" below.
+first; wiring that up is a later cleanup).
+M4 step 3 (same day): the settings dialog's HD page is replaced by a
+"Hard Discs" tab — 7 slots with type picker (Hard drive/CD-ROM/ZIP with
+channel exclusivity), geometry fields, Choose…/New…/Eject, .img/.vhd
+creation (raw/fixed/dynamic/differencing, `src/mac/HardDiscSheets.swift`).
+The bridge keeps a PENDING slot snapshot per settings session
+(`pcem_bridge_hd_slot_*`, `pcem_bridge_hd_set_channels`), dirty-checks it
+against the globals (`hd_pending_dirty` = wx's `hd_changed` + channel
+compares) and writes it back in apply; image probe/create
+(`pcem_bridge_hd_image_probe/_create`, minivhd) port `hd_file`/`hdnew_dlgproc`.
+Only the per-device "Configure…" sub-dialogs still need the wx build
+(`PCem` target, kept as reference until M5).
 
 ## How to build
 
@@ -190,12 +198,11 @@ Replace the wx config dialogs with SwiftUI, one at a time, in the `PCemMac` targ
    machine). Units gotcha: `mem_size` is always KB but model
    min/max/granularity are in DISPLAY units (MB when `MODEL_AT &&
    ram_granularity < 128`) — see `clamp_mem_size()` in the bridge.
-3. **HD slots** (the rest of the Drives page) ⬜ NEXT: 7 slots `hdc[]`/`ide_fn[]`
-   + geometry + cdrom/zip channel exclusivity + `.img`/`.vhd` image creation
-   (`hdnew_dlgproc`/`hdsize_dlgproc` in wx-config.c, minivhd).
-   (The manager's Configure… already works: `pcem_bridge_settings_begin_edit`
-   loads a config without booting it — safe because the launcher flow means
-   Configure is only enabled while nothing is running.)
+3. ~~**HD slots** (the rest of the Drives page)~~ ✅ 2026-07-28 — "Hard Discs"
+   tab in the settings sheet: 7 slots `hdc[]`/`ide_fn[]` via a pending
+   snapshot in the bridge, cdrom/zip channel exclusivity, `.img`/`.vhd`
+   probe + creation (`hdnew_dlgproc`/`hdsize_dlgproc`/`hd_file` ports,
+   minivhd) in `src/mac/HardDiscSheets.swift`.
 4. Device config dialogs (`wx-deviceconfig.cc`) come last; some devices have custom
    UIs — stub or defer to M5.
 5. Keep the wx `PCem` target building until M5 removes it.

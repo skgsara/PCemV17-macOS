@@ -1,15 +1,18 @@
 import SwiftUI
+import AppKit
 
-/// M4 step 2: native replacement for the wx settings dialog (wx-config.c),
-/// minus the hard-disc slot panels and device "Configure" sub-dialogs
-/// (M4 step 3 / M5). Edits the RUNNING machine, like wx's IDM_CONFIG.
+/// M4 step 2: native replacement for the wx settings dialog (wx-config.c);
+/// M4 step 3 added the Hard Discs tab (hdconf_dlgproc port). Device
+/// "Configure" sub-dialogs remain M5. Edits the RUNNING machine in live
+/// mode, like wx's IDM_CONFIG.
 ///
 /// All state lives in a local copy of pcem_settings_t plus three strings
-/// (hdd controller / lpt device / cd model). Lists come from the bridge,
-/// filtered for the selected model exactly like the wx recalc_*_list
-/// functions; changing the model re-queries and clamps (port of wx's
-/// on_model_changed). Apply goes through pcem_bridge_settings_apply, which
-/// dirty-checks, reboots and saves like config_dlgsave.
+/// (hdd controller / lpt device / cd model) and the HD slot array. Lists
+/// come from the bridge, filtered for the selected model exactly like the
+/// wx recalc_*_list functions; changing the model re-queries and clamps
+/// (port of wx's on_model_changed). Apply goes through
+/// pcem_bridge_settings_apply, which dirty-checks, reboots and saves like
+/// config_dlgsave.
 struct SettingsView: View {
 
     /// nil = edit the RUNNING machine (live mode; Apply may reboot).
@@ -24,6 +27,36 @@ struct SettingsView: View {
     @State private var lptDevice = ""
     @State private var cdModel = ""
     @State private var confirmReboot = false
+
+    // HD slot state (M4 step 3). Mirrored to the bridge's pending state by
+    // syncHD() at Apply time; type per slot is derived from the channels,
+    // like wx's update_hdd_cdrom.
+    private struct HDSlotState {
+        var spt = 0, hpc = 0, cyl = 0
+        var path = ""
+    }
+    @State private var hdSlots = [HDSlotState](repeating: HDSlotState(),
+                                               count: Int(PCEM_HD_SLOTS))
+    @State private var cdromChannel = -1
+    @State private var zipChannel = -1
+
+    // Sheets / alerts for the HD rows.
+    private struct NewImageRequest: Identifiable {
+        let id = UUID()
+        let slot: Int
+    }
+    private struct ProbeResult: Identifiable {
+        let id = UUID()
+        let slot: Int
+        let path: String
+        let spt: Int, hpc: Int, cyl: Int
+    }
+    @State private var newImageRequest: NewImageRequest?
+    @State private var probeResult: ProbeResult?
+    @State private var showError = false
+    @State private var errorText = ""
+    @State private var tsFixProbe: ProbeResult? // timestamp-mismatch pending probe
+    @State private var showTsFix = false
 
     // Integer-valued picker option (value = the core's own index/number).
     private struct Opt: Identifiable {
@@ -55,6 +88,7 @@ struct SettingsView: View {
                 Form { videoRows }.tabItem { Text("Video") }
                 Form { soundRows }.tabItem { Text("Sound") }
                 Form { drivesRows }.tabItem { Text("Drives") }
+                hardDiscRows.tabItem { Text("Hard Discs") }
                 Form { inputRows }.tabItem { Text("Input") }
             }
             .formStyle(.grouped)
@@ -78,6 +112,31 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The machine will reboot with the new settings.")
+        }
+        .sheet(item: $newImageRequest) { req in
+            NewHardDiscSheet { path, spt, hpc, cyl in
+                hdSlots[req.slot] = HDSlotState(spt: spt, hpc: hpc, cyl: cyl, path: path)
+            }
+        }
+        .sheet(item: $probeResult) { result in
+            ConfirmGeometrySheet(path: result.path, initialSpt: result.spt,
+                                 initialHpc: result.hpc, initialCyl: result.cyl) { path, spt, hpc, cyl in
+                hdSlots[result.slot] = HDSlotState(spt: spt, hpc: hpc, cyl: cyl, path: path)
+            }
+        }
+        .alert("PCem error", isPresented: $showError) {
+            Button("OK") {}
+        } message: {
+            Text(errorText)
+        }
+        .alert("PCem error", isPresented: $showTsFix) {
+            Button("Fix") { fixTimestamp() }
+            Button("Don't fix", role: .cancel) {}
+        } message: {
+            Text("WARNING: VHD PARENT/CHILD TIMESTAMPS DO NOT MATCH!\n\n" +
+                 "This could indicate that the parent image was modified after this VHD was created.\n\n" +
+                 "This could also happen if the VHD files were moved/copied, or the differencing VHD was created with DiskPart.\n\n" +
+                 "Do you wish to fix this error after a file copy or DiskPart creation?")
         }
     }
 
@@ -199,6 +258,135 @@ struct SettingsView: View {
             Picker("Joystick", selection: $s.joystick_type) {
                 ForEach(joystickOptions()) { o in Text(o.label).tag(o.value) }
             }
+    }
+
+    // MARK: - Hard Discs tab (M4 step 3, port of hdconf_dlgproc)
+
+    /// 0 = hard drive, 1 = CD-ROM, 2 = ZIP (wx update_hdd_cdrom).
+    private func slotType(_ i: Int) -> Int {
+        if cdromChannel == i { return 1 }
+        if zipChannel == i { return 2 }
+        return 0
+    }
+
+    /// Port of hd_combodrivetype: CD-ROM and ZIP channels are exclusive.
+    private func setSlotType(_ i: Int, _ type: Int) {
+        switch type {
+        case 1:
+            cdromChannel = i
+            if zipChannel == i { zipChannel = -1 }
+        case 2:
+            zipChannel = i
+            if cdromChannel == i { cdromChannel = -1 }
+        default:
+            if cdromChannel == i { cdromChannel = -1 }
+            if zipChannel == i { zipChannel = -1 }
+        }
+    }
+
+    private func slotTypeBinding(_ i: Int) -> Binding<Int> {
+        Binding(get: { slotType(i) }, set: { setSlotType(i, $0) })
+    }
+
+    @ViewBuilder private var hardDiscRows: some View {
+        // MFM controllers only take hard discs (wx hdconf_update).
+        let mfm = pcem_bridge_hdd_is_mfm(hddController) != 0
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(0..<Int(PCEM_HD_SLOTS), id: \.self) { i in
+                    GroupBox("Drive \(i)") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Picker("Type", selection: slotTypeBinding(i)) {
+                                Text("Hard drive").tag(0)
+                                Text("CD-ROM").tag(1)
+                                Text("ZIP").tag(2)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .disabled(mfm)
+
+                            if slotType(i) == 0 {
+                                HStack {
+                                    TextField("Sectors", value: $hdSlots[i].spt, format: .number)
+                                    TextField("Heads", value: $hdSlots[i].hpc, format: .number)
+                                    TextField("Cylinders", value: $hdSlots[i].cyl, format: .number)
+                                    Text("\(hdSizeMB(spt: hdSlots[i].spt, hpc: hdSlots[i].hpc, cyl: hdSlots[i].cyl)) MB")
+                                        .foregroundStyle(.secondary)
+                                        .frame(minWidth: 60, alignment: .trailing)
+                                }
+                                HStack {
+                                    TextField("Image file", text: $hdSlots[i].path)
+                                    Button("Choose…") { chooseImage(slot: i) }
+                                    Button("New…") { newImageRequest = NewImageRequest(slot: i) }
+                                    Button("Eject") {
+                                        // Port of hd_eject.
+                                        hdSlots[i] = HDSlotState()
+                                    }
+                                    .disabled(hdSlots[i].path.isEmpty)
+                                }
+                            } else {
+                                Text("Media is mounted from the menu bar (CD-ROM / Disc menu).")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .padding()
+        }
+    }
+
+    /// Choose an existing .img/.vhd (port of hd_file): probe the image, then
+    /// confirm the geometry in a sheet before filling the slot.
+    private func chooseImage(slot: Int) {
+        let panel = NSOpenPanel()
+        panel.allowedFileTypes = ["img", "vhd"]
+        panel.allowsOtherFileTypes = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        var spt: Int32 = 0, hpc: Int32 = 0, cyl: Int32 = 0
+        var isVHD: Int32 = 0, tsMismatch: Int32 = 0
+        var errbuf = [CChar](repeating: 0, count: 256)
+        let isMfm = pcem_bridge_hdd_is_mfm(hddController)
+        let path = url.path
+        let rc = path.withCString { p in
+            errbuf.withUnsafeMutableBufferPointer { eb in
+                pcem_bridge_hd_image_probe(p, isMfm, &spt, &hpc, &cyl,
+                                           &isVHD, &tsMismatch,
+                                           eb.baseAddress, Int32(eb.count))
+            }
+        }
+        if rc == 1 {
+            errorText = "Can't open file for read"
+            showError = true
+            return
+        }
+        if rc == 2 {
+            errorText = String(cString: errbuf)
+            showError = true
+            return
+        }
+        let result = ProbeResult(slot: slot, path: path,
+                                 spt: Int(spt), hpc: Int(hpc), cyl: Int(cyl))
+        if tsMismatch != 0 {
+            // wx asks YES/NO before continuing; fix, then confirm geometry.
+            tsFixProbe = result
+            showTsFix = true
+            return
+        }
+        probeResult = result
+    }
+
+    private func fixTimestamp() {
+        guard let probe = tsFixProbe else { return }
+        if pcem_bridge_hd_vhd_fix_timestamp(probe.path) != 0 {
+            errorText = "Can't fix VHD timestamps"
+            showError = true
+            return
+        }
+        probeResult = probe
     }
 
     // MARK: - Bridge list queries
@@ -374,9 +562,31 @@ struct SettingsView: View {
         hddController = String(cString: pcem_bridge_settings_hdd_controller())
         lptDevice = String(cString: pcem_bridge_settings_lpt1_device())
         cdModel = String(cString: pcem_bridge_settings_cd_model())
+
+        // HD slots from the bridge's pending snapshot.
+        for i in 0..<Int(PCEM_HD_SLOTS) {
+            var spt: Int32 = 0, hpc: Int32 = 0, cyl: Int32 = 0
+            pcem_bridge_hd_slot_get(Int32(i), &spt, &hpc, &cyl)
+            hdSlots[i] = HDSlotState(spt: Int(spt), hpc: Int(hpc), cyl: Int(cyl),
+                                     path: String(cString: pcem_bridge_hd_slot_path(Int32(i))))
+        }
+        cdromChannel = Int(pcem_bridge_hd_cdrom_channel())
+        zipChannel = Int(pcem_bridge_hd_zip_channel())
+    }
+
+    /// Push the local HD state into the bridge's pending state (the bridge
+    /// dirty-checks pending vs the core globals, like wx's hd_changed).
+    private func syncHD() {
+        for i in 0..<Int(PCEM_HD_SLOTS) {
+            pcem_bridge_hd_slot_set(Int32(i), Int32(hdSlots[i].spt),
+                                    Int32(hdSlots[i].hpc), Int32(hdSlots[i].cyl),
+                                    hdSlots[i].path)
+        }
+        pcem_bridge_hd_set_channels(Int32(cdromChannel), Int32(zipChannel))
     }
 
     private func applyTapped() {
+        syncHD()
         if pcem_bridge_settings_would_reboot(&s, hddController, lptDevice) != 0 {
             confirmReboot = true
         } else {

@@ -171,6 +171,54 @@ int pcem_bridge_cd_model_fixed_speed(const char *cd_model_name);
 int pcem_bridge_cd_speed_count(void);
 int pcem_bridge_cd_speed_value(int list_index);
 
+/* ---- Hard-disc slots (M4 step 3) ------------------------------------------
+   Port of the wx settings dialog's HD page (hdconf_dlgproc & friends in
+   wx-config.c). The bridge keeps a PENDING copy of the 7 slots (geometry +
+   image path) and the cdrom/zip channels, snapshotted from the globals by
+   pcem_bridge_settings_begin/_begin_edit; pcem_bridge_settings_apply
+   dirty-checks and writes them back like config_dlgsave, cancel drops them.
+   All slot accessors below are only valid inside a settings session. */
+#define PCEM_HD_SLOTS 7
+#define PCEM_HD_MAX_CYLINDERS 265264 /* wx-config.c:26 (Award 430VX POST limit) */
+
+void        pcem_bridge_hd_slot_get(int slot, int *spt, int *hpc, int *cyl);
+const char *pcem_bridge_hd_slot_path(int slot); /* "" when empty */
+void        pcem_bridge_hd_slot_set(int slot, int spt, int hpc, int cyl,
+                                    const char *path);
+int  pcem_bridge_hd_cdrom_channel(void); /* -1 = none */
+int  pcem_bridge_hd_zip_channel(void);
+void pcem_bridge_hd_set_channels(int cdrom, int zip);
+
+/* 1 when the named HDD controller (internal name) is MFM — the UI then
+   disables the per-slot type pickers, like hdconf_update. */
+int pcem_bridge_hdd_is_mfm(const char *internal_name);
+
+/* The 46-entry AT BIOS drive-type table (wx hd_types). */
+int  pcem_bridge_hd_type_count(void);
+void pcem_bridge_hd_type_get(int index, int *cylinders, int *heads);
+
+/* Probe an existing image (port of hd_file + check_hd_type +
+   adjust_vhd_geometry_for_pcem). Fills geometry + is_vhd +
+   timestamp_mismatch. Returns 0 ok / 1 can't open / 2 VHD error
+   (errbuf carries mvhd_strerr). */
+int pcem_bridge_hd_image_probe(const char *path, int is_mfm,
+        int *spt, int *hpc, int *cyl, int *is_vhd, int *timestamp_mismatch,
+        char *errbuf, int errbuf_size);
+/* Fix a differencing VHD's parent timestamp (wx's YES branch). 0 = ok. */
+int pcem_bridge_hd_vhd_fix_timestamp(const char *path);
+
+/* Create an image (port of the hdnew_dlgproc OK handler; the UI validates
+   geometry first). format: 0 raw .img, 1 fixed VHD, 2 dynamic VHD,
+   3 differencing VHD (parent_path required). block_large: 1 = 2 MB blocks,
+   0 = 512 KB (dynamic/diff only). Returns 0 ok / 1 can't open file /
+   2 VHD create failed. For format 3 the out-params return the
+   parent-derived geometry; for the others they echo the inputs. */
+int pcem_bridge_hd_image_create(const char *path, int spt, int hpc, int cyl,
+        int format, int block_large, const char *parent_path,
+        int *out_spt, int *out_hpc, int *out_cyl);
+/* 0..100 while a create runs (port of create_drive_pos); -1 when idle. */
+int pcem_bridge_hd_create_progress(void);
+
 /* ---- Drives & sound (mirror the wx context-menu handlers) -----------------
    All of these are safe to call from the UI thread while emulation runs
    (the wx menu handlers do exactly the same). */
