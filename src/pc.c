@@ -619,13 +619,23 @@ void closepc()
         codegen_close();
         atapi->exit();
 //        ioctl_close();
+#ifndef __APPLE__
+        /* Debug-only memory dumps (write ~40 MB of ram.dmp/rram.dmp on every
+           quit). On macOS they also CRASH at quit: readmemb() walks the
+           memory mappings and hits a wild pointer when the guest used
+           paging (e.g. Windows 3.1 386 Enhanced mode) — 4 identical crash
+           reports 2026-07-28/29. Skip the dumps on macOS; the teardown
+           below is unaffected. */
         dumppic();
+#endif
 //        output=7;
 //        setpitclock(clocks[0][0][0]);
 //        while (1) runpc();
         disc_close(0);
         disc_close(1);
+#ifndef __APPLE__
         dumpregs();
+#endif
         closevideo();
         lpt1_device_close();
         mouse_emu_close();

@@ -230,6 +230,14 @@ Two independent build systems exist. **Both must keep working.**
 - macOS file list in `src/Makefile.am`: `cdrom-ioctl-osx.c`, `wx-sdl2-display.c`,
   defines `PCEM_RENDER_WITH_TIMER` / `PCEM_RENDER_TIMER_LOOP`, off64 fallbacks.
 
+### Later macOS core patches (added after 5bb3bb4, keep minimal)
+- `disc.c`: guard overlapping `strcpy` in `disc_load` (fortified libc traps it).
+- `pc.c` `closepc()` (2026-07-29): skip upstream's debug `dumppic()`/`dumpregs()`
+  on macOS (`#ifndef __APPLE__`) — `dumpregs` walks guest memory via `readmemb`
+  at quit and segfaults when the guest used paging (Windows 3.1 386 Enhanced);
+  it also wrote ~40 MB of ram.dmp/rram.dmp on every quit. Four identical
+  crash reports (`closepc → dumpregs → readmembl`) 2026-07-28/29.
+
 ### Build flags that matter (both build systems)
 - Defines: `PCEM_RENDER_WITH_TIMER`, `PCEM_RENDER_TIMER_LOOP`, `off64_t=off_t`,
   `fopen64=fopen`, `fseeko64=fseek`, `ftello64=ftell`.

@@ -587,3 +587,35 @@ also try Sound menu buffer length 50–400 ms and gain changes live).
 
 **Next (M5 finale)**: app icon + signing/notarization. Joystick +
 GameController whenever a controller is available.
+
+---
+
+## 2026-07-29 — Session 12b: quit-crash fix (pre-existing, NOT audio-related)
+
+**Owner's audio test**: BIOS beep ✅, Windows 3.1 startup/exit sounds ✅
+(CoreAudio backend works). Playing a MIDI file in Windows 3.1: crackling,
+then "Windows crashed" — actually the **PCemMac app itself** was gone.
+
+**Diagnosis**: crash report `PCemMac-2026-07-29-090345.ips` shows the crash
+was in the QUIT path, not MIDI/audio: `windowWillClose` → `terminate` →
+`pcem_bridge_quit` → `closepc` → `dumpregs` → `readmembl` → SIGSEGV at
+0xB8000. And three crash reports from 2026-07-28 have the IDENTICAL stack —
+this bug existed since the native shell was born; every quit after a session
+(especially with Windows 3.1's paging enabled) died in upstream's debug
+memory dump (`closepc` in `src/pc.c` unconditionally calls `dumpregs`,
+which walks 16 MB of guest memory via `readmemb` and hits a wild pointer
+under paging; it also wrote ~40 MB of ram.dmp/rram.dmp per quit).
+
+**Fix** (minimal core patch, same spirit as the Apple Silicon patches):
+`src/pc.c` `closepc()` — skip `dumppic()`/`dumpregs()` under
+`#ifndef __APPLE__`, with a comment. Real teardown (codegen/atapi/disc/
+video/device close) unchanged. Both build systems rebuilt.
+
+**Verification**: boot ms-dos-5 12 s → graceful quit via AppleScript →
+clean exit, NO new crash report. (Before the fix this path produced the
+4 reports above.)
+
+**Still open**: the MIDI-playback crackling itself. Likely the emulated
+machine dropping below 100% speed under Windows 3.1 + OPL FM load (the
+window title shows the %) — owner to retest and report the speed reading;
+if it stays at 100% and still crackles, the backend needs another look.
