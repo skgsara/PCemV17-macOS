@@ -30,3 +30,6 @@ nvr/
 screenshots/
 pcem.cfg
 *.nvr
+
+# distribution build output (macos/sign_and_notarize.sh)
+build/

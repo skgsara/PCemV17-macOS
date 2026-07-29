@@ -660,3 +660,38 @@ contained, would make SB 1.5 MIDI work through CoreMIDI too.)
 
 **Verification after cleanup**: no SBDBG references left; Xcode + autotools
 (full clean rebuild) both green.
+
+---
+
+## 2026-07-29 — Session 14: app icon + signing groundwork (M5 finale)
+
+**Owner decisions**: generate the icon art now; go the full Developer
+ID/notarization route (with her Apple account when ready).
+
+**Done**:
+- App icon: `macos/make_icon.py` — dependency-free Python (stdlib zlib PNG
+  encoder) drawing a beige retro all-in-one PC with a green `>_` prompt on
+  the macOS squircle, box-downscaled into a full `AppIcon.iconset`;
+  `iconutil` → `macos/AppIcon.icns` (committed; re-run the script only to
+  change the art). Wired into PCemMac via `project.yml` (resources
+  buildPhase + `CFBundleIconFile`/`CFBundleIconName`).
+- Signing: `ENABLE_HARDENED_RUNTIME: YES` in project.yml. Release build
+  verified (first since M2): self-contained executable (no .debug.dylib),
+  `codesign` flags `0x10002` = adhoc+runtime, JIT entitlement present.
+  Debug stays adhoc — correct for local dev.
+- `macos/sign_and_notarize.sh` (new, executable): Release build →
+  `codesign --options runtime --deep` with Developer ID → `notarytool
+  submit --wait` → `stapler staple` → `spctl` check. Header comments hold
+  the owner's one-time checklist (paid membership, Xcode "Developer ID
+  Application" certificate, `notarytool store-credentials pcem-notary`).
+  `build/` added to `.gitignore` for its output.
+- START_HERE.md brought up to date (it was two milestones stale).
+
+**Gotcha hit**: the Dock kept showing the white placeholder icon after the
+.icns landed — the LaunchServices icon cache. Fixed with
+`lsregister -f <app>` + `killall Dock`; verified visually (beige CRT in
+the Dock).
+
+**Next**: owner does the Apple account checklist (script header), then run
+`macos/sign_and_notarize.sh` together and fix whatever breaks. After that
+M5 is done except joystick (needs a controller).

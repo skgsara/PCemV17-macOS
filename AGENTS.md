@@ -40,9 +40,11 @@ much as possible**. This is a multi-month effort done in milestones.
 - **M5 — Remove wx entirely**: drop SDL/wx dependencies; optionally replace OpenAL with
   CoreAudio; CoreMIDI; app icon/signing/notarization. 🔶 IN PROGRESS — device
   "Configure…" sub-dialogs ✅ 2026-07-28, wx target + SDL/wx deps removed from
-  Xcode ✅ 2026-07-28, CoreMIDI ✅ 2026-07-29, CoreAudio ✅ 2026-07-29;
-  remaining: joystick mapping + GameController (deferred — needs a controller
-  to test), app icon/signing (owner wants those LAST).
+  Xcode ✅ 2026-07-28, CoreMIDI ✅ 2026-07-29, CoreAudio ✅ 2026-07-29,
+  app icon ✅ 2026-07-29, signing groundwork (hardened runtime +
+  `macos/sign_and_notarize.sh`) ✅ 2026-07-29; remaining: owner's Apple
+  Developer account steps (script header checklist), joystick mapping +
+  GameController (deferred — needs a controller to test).
 
 ## Current status
 
@@ -123,6 +125,19 @@ is defined there (the core rewrites it from the Sound menu).
 from the Xcode link — autotools keeps it for the wx binary. Verified
 end-to-end with temporary frame counters: pushed ≈ pulled at 48000
 frames/s with stable ~40 ms lag over 19 s of boot.
+M5 finale (2026-07-29): **app icon + signing groundwork**.
+`macos/make_icon.py` (dependency-free, stdlib zlib PNG writer) draws the
+icon — beige CRT, green `>_` prompt, dark squircle — into
+`macos/AppIcon.iconset` → `iconutil` → committed `macos/AppIcon.icns`;
+wired in via `project.yml` (resources buildPhase + CFBundleIconFile/Name).
+Icon cache gotcha: an existing placeholder icon sticks until
+`lsregister -f` + `killall Dock`. Signing: `ENABLE_HARDENED_RUNTIME: YES`
+(Release build verified: self-contained executable, `flags=0x10002`
+adhoc+runtime; Debug stays adhoc-only, fine for local dev).
+`macos/sign_and_notarize.sh` = one-command Release → Developer ID sign →
+notarytool → staple, with the owner's Apple-account checklist in its
+header (membership, Xcode certificate, `notarytool store-credentials`).
+Remaining M5: her account steps; joystick when hardware exists.
 
 ## How to build
 
