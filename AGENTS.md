@@ -40,9 +40,9 @@ much as possible**. This is a multi-month effort done in milestones.
 - **M5 — Remove wx entirely**: drop SDL/wx dependencies; optionally replace OpenAL with
   CoreAudio; CoreMIDI; app icon/signing/notarization. 🔶 IN PROGRESS — device
   "Configure…" sub-dialogs ✅ 2026-07-28, wx target + SDL/wx deps removed from
-  Xcode ✅ 2026-07-28; remaining: joystick mapping + GameController (deferred —
-  needs a controller to test), CoreMIDI (then un-hide `CONFIG_MIDI` items),
-  optional OpenAL→CoreAudio, app icon/signing.
+  Xcode ✅ 2026-07-28, CoreMIDI ✅ 2026-07-29; remaining: joystick mapping +
+  GameController (deferred — needs a controller to test), optional
+  OpenAL→CoreAudio, app icon/signing (owner wants those LAST).
 
 ## Current status
 
@@ -78,8 +78,8 @@ compares) and writes it back in apply; image probe/create
 M5 slice 1 (2026-07-28): the generic wx device-config dialog
 (`wx-deviceconfig.cc`) is replaced by `src/mac/DeviceConfigView.swift` +
 `pcem_bridge_devcfg_*` (all-int bridge API over `device_t.config`;
-CONFIG_BINARY → Toggle, CONFIG_SELECTION → Picker, CONFIG_MIDI filtered out
-until CoreMIDI lands). Five "Configure…" buttons in the settings sheet
+CONFIG_BINARY → Toggle, CONFIG_SELECTION → Picker; CONFIG_MIDI filtered out
+until slice 3 landed CoreMIDI). Five "Configure…" buttons in the settings sheet
 (Machine/Video/Voodoo/Sound/HD Controller) resolve their device from the
 PENDING selection exactly like `wx-config.c:1220-1290`; Apply dirty-checks,
 confirms "This will reset PCem!" when a machine runs, then writes +
@@ -93,6 +93,22 @@ sources stay in the tree and **autotools still builds the wx `pcem` binary**
 feature: joystick axis/button mapping (`wx-joystickconfig.cc` — deferred
 until the owner has a controller to test with, then it lands as a
 GameController port + SwiftUI sheet).
+M5 slice 3 (2026-07-29): **CoreMIDI backend** replaces the MIDI stub.
+`src/mac/pcem_mac_midi.m` (the only file with CoreMIDI includes, no PCem
+headers) wraps client/virtual-source/destination/send behind a plain-C API;
+`pcem_bridge.m` implements the five `plat-midi.h` functions on top,
+including the win/alsa byte-stream reassembler (with two deliberate fixes:
+no-op when no device is open, and proper running-status handling — upstream
+has a latent buffer overflow there). Device list: index 0 = "PCem Virtual
+Output" (CoreMIDI virtual source, works out of the box with any Mac synth
+app), 1..N = real CoreMIDI destinations. Selection travels via config key
+`midi` in the NULL section, re-read by `midi_init` at every boot
+(`boot_machine`, mirrors wx-sdl2.c:673/725). The "MIDI out device" picker
+now appears in the SB16/AWE32/Aztech Configure sheets — CONFIG_MIDI items
+are synthesized as generic Picker options in the devcfg bridge, so
+`DeviceConfigView.swift` needed no changes. Switching device applies
+immediately (`midi_close`+`midi_init` after the reset — wx made you
+reboot).
 
 ## How to build
 
@@ -125,8 +141,10 @@ Two independent build systems exist. **Both must keep working.**
     `clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)`, `timer_freq = 1e9`) + 2048×2048
     BGRX staging framebuffer behind a mutex (port of `sdl_blit_memtoscreen`).
     **Includes NO Apple system headers beyond libc** (see hazard below).
-  - `pcem_mac_platform.m/.h` — the ONLY file mixing frameworks with the shell:
-    NSBundle resource path, config dir listing, NSLog, `dispatch_async_f` to main.
+  - `pcem_mac_platform.m/.h` — one of the TWO files mixing frameworks with the
+    shell: NSBundle resource path, config dir listing, NSLog,
+    `dispatch_async_f` to main. The other is `pcem_mac_midi.m/.h` — CoreMIDI
+    backend behind a plain-C API (added M5 slice 3; see "Current status").
   - `keymap.c/.h` — macOS `NSEvent.keyCode` → PC set-1 scancode table (ported from
     `SDLScancodeToSystemScancode` in `wx-sdl2-display.c`).
   - `PCemMacApp.swift` — app/window/menus. Full menu bar mirroring the wx
@@ -174,7 +192,9 @@ Two independent build systems exist. **Both must keep working.**
   `closeal()`, `givealbuffer(int32_t*)`, `givealbuffer_cd(int16_t*)`.
 - Video backend contract: implement `video_blit_memtoscreen_func` consuming `buffer32`
   (2048×2048 BITMAP, `video.h`), then call `video_blit_complete()`.
-- MIDI: `plat-midi.h`; the macOS build uses the stub `wx-sdl2-midi.c`.
+- MIDI: `plat-midi.h`; the native shell implements it over CoreMIDI
+  (`pcem_mac_midi.m` + the reassembler in `pcem_bridge.m`, M5 slice 3). The
+  autotools wx build still uses `midi_alsa.c` (Linux) / `wx-sdl2-midi.c` (stub).
 - Threading primitives (`thread.h`) come from the pthread half of `wx-thread.c` —
   this file is a CORE dependency despite its name.
 - **Apple system headers collide with core names**: mach/dispatch headers typedef
@@ -198,8 +218,8 @@ Two independent build systems exist. **Both must keep working.**
   `fopen64=fopen`, `fseeko64=fseek`, `ftello64=ftell`.
 - Networking is OFF (no `USE_NETWORKING`, no slirp). Don't enable casually.
 - Links (Xcode): OpenAL, IOKit, Carbon, Cocoa, QuartzCore, AudioToolbox,
-  pthread — no SDL2/wx since M5 slice 2. The autotools wx build still links
-  SDL2 + wx 3.3 (Homebrew, dynamic).
+  CoreMIDI (M5 slice 3), pthread — no SDL2/wx since M5 slice 2. The
+  autotools wx build still links SDL2 + wx 3.3 (Homebrew, dynamic).
 
 ## How M4 was attacked (kept as a record; M4 is DONE)
 
@@ -250,14 +270,13 @@ The wx config dialogs were replaced with SwiftUI, one at a time, in the `PCemMac
   POV_Y=0x40000000 encoding, writes straight to `joystick_state[]`, no reset
   needed). Mappings persist in the `[Joysticks]` cfg section — `loadconfig`/
   `saveconfig` in `pc.c` already handle them.
-- **CoreMIDI**: implement `plat-midi.h` against CoreMIDI (replaces the
-  `wx-sdl2-midi.c` stub), then stop filtering `CONFIG_MIDI` items in
-  `pcem_bridge_devcfg_begin`.
+- ~~**CoreMIDI**~~ ✅ 2026-07-29 (slice 3, see "Current status").
 - **Optional**: OpenAL→CoreAudio (sound backend contract in "Coupling
-  hazards"), app icon, signing/notarization.
+  hazards"). **App icon, signing/notarization come LAST** (owner decision
+  2026-07-29), after all functional work.
 
 Known M3 leftovers to fix when they bite: no screenshots/shaders, no joystick UI,
-MIDI stubbed, windowed-only (standard macOS fullscreen works via the green button),
+windowed-only (standard macOS fullscreen works via the green button),
 stuck keys possible if the app loses focus mid-keypress (mouse is released, keys
 are not), no "create blank disc image" or machine-status windows (wx dialogs —
 M4/M5), no host-CD-drive menu item (no optical drives on modern Macs).

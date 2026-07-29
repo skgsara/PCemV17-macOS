@@ -498,3 +498,53 @@ only one .xcscheme exists on disk); clean build succeeds; autotools `make`
 when hardware exists (full how-to in AGENTS.md "How to attack the rest of
 M5", incl. the POV_X/POV_Y encoding and the `wx-sdl2-joystick.c` poll loop
 to copy).
+
+---
+
+## 2026-07-29 — Session 11: CoreMIDI backend (M5 slice 3)
+
+**Owner decision**: do CoreMIDI + CoreAudio now; app icon/signing LAST.
+
+**Done** — the MIDI stub is replaced by a real CoreMIDI backend, and the
+"MIDI out device" picker now appears in the SB16/AWE32/Aztech Configure
+sheets:
+- `src/mac/pcem_mac_midi.m/.h` (new): the ONLY file with CoreMIDI includes
+  (no PCem headers — same rule as `pcem_mac_platform.m`). Plain-C wrapper:
+  lazy `MIDIClientCreate`, index 0 = "PCem Virtual Output" (`MIDISourceCreate`
+  — a virtual source any Mac synth app can listen to, works out of the box),
+  indices 1..N = real CoreMIDI destinations (`MIDIGetDestination` +
+  `MIDIOutputPortCreate`). Send builds a `MIDIPacketList` (timestamp 0,
+  ≤256-byte packets) → `MIDIReceived` (virtual) / `MIDISend` (destination),
+  and no-ops when nothing is open (the guard the alsa backend lacks).
+- `pcem_bridge.m`: the five `plat-midi.h` functions replace the stub.
+  `midi_init` reads config key `midi` from the NULL section (wx precedent —
+  NOT the device-name section) and falls back to index 0 when the configured
+  device vanished (like win-midi); hooked into `boot_machine` /
+  `emu_thread_stop` (mirrors `wx-sdl2.c:673/725`). `midi_write` is the
+  win/alsa byte-stream reassembler with TWO deliberate fixes:
+  1. no-op when no device is open (alsa segfaults),
+  2. running status handled correctly — upstream (both win-midi.c and
+     midi_alsa.c) has a LATENT UNBOUNDED OVERFLOW: after a complete message,
+     running-status data bytes keep writing past `midi_command[4]` because
+     `midi_pos` is never reset. Fix: when `midi_pos >= midi_len`, restart at
+     index 1 (the stored status byte stays at index 0).
+- Devcfg bridge: CONFIG_MIDI items un-filtered (`devcfg_begin` includes them
+  when `midi_get_num_devs() > 0`, reads/writes the NULL section); options
+  synthesized from the backend's device list in `devcfg_item`/`devcfg_option`
+  — so `DeviceConfigView.swift` renders the picker with ZERO Swift changes.
+  Switching the device while running now applies immediately
+  (`midi_close`+`midi_init` after the reset; wx made you reboot).
+- `project.yml`: `CoreMIDI.framework` added to `PCemMac`. Autotools
+  untouched (wx binary keeps its alsa/stub MIDI).
+
+**Verification**: standalone wrapper test (coder): enumeration = 1 device
+("PCem Virtual Output"), open/reopen/bad-index/send/sysex all sane. Headless
+screenshot (temporary auto-open, removed after): SB16 Configure sheet shows
+"MIDI out device: PCem Virtual Output". 15 s boot smoke run of ms-dos-5
+(exercises `midi_init` → virtual source creation): alive, no log errors.
+NOT verified: actual MIDI music into a synth app — needs e.g. Munt
+installed; owner can try later (pick the device in Settings → Sound →
+SB16 Configure…, play a game with GM music).
+
+**Next (M5)**: CoreAudio (replace OpenAL; sound backend contract in
+AGENTS.md "Coupling hazards"). Then app icon/signing as the finale.

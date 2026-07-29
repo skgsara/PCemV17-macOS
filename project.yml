@@ -98,6 +98,7 @@ targets:
       - sdk: Cocoa.framework
       - sdk: QuartzCore.framework
       - sdk: AudioToolbox.framework
+      - sdk: CoreMIDI.framework
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.pcem.PCemMac

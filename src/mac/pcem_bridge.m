@@ -6,7 +6,8 @@
  *    layer (see AGENTS.md "Coupling hazards"): create_bitmap/destroy_bitmap/
  *    hline, startblit/endblit, timer_read/timer_freq, the keyboard/mouse
  *    polling functions, updatewindowsize, set_window_title, warning,
- *    stop_emulation_now, get_pcem_path, dir_exists, plus joystick/MIDI stubs.
+ *    stop_emulation_now, get_pcem_path, dir_exists, plus a joystick stub and
+ *    the plat-midi.h functions (CoreMIDI backend via pcem_mac_midi.m).
  *    It also assigns video_blit_memtoscreen_func so the core's blit thread
  *    can hand frames to us.
  *
@@ -64,6 +65,7 @@
 
 #include "pcem_bridge.h"
 #include "pcem_mac_platform.h"
+#include "pcem_mac_midi.h"
 
 /* Core blit-handshake function, defined in video.c but not in any header
    (the wx UI declares it in wx-sdl2-video.h, which we don't use). */
@@ -259,7 +261,100 @@ void mouse_get_mickeys(int *x, int *y, int *z)
 }
 
 void joystick_poll(void) { }
-void midi_write(uint8_t val) { (void)val; }
+
+/* ========================================================================
+ * MIDI out — CoreMIDI backend (port of midi_alsa.c / win-midi.c).
+ *
+ * The core feeds a raw MPU-401 UART byte stream (sound_mpu401_uart.c); the
+ * state machine below reassembles complete messages, ported from
+ * midi_alsa.c:123-171 (midi_lengths table, running-status handling, sysex
+ * accumulation up to 1024+2 bytes). Two deliberate differences: alsa
+ * crashes when sending with no device open — mac_midi_send() no-ops in
+ * that case instead (guard lives in the wrapper) — and alsa/win both have
+ * a latent buffer overflow on running-status streams, fixed below.
+ * ======================================================================== */
+
+void midi_init(void)
+{
+        /* The selected device travels via config key "midi" in the NULL
+           (machine-global) section — unlike other device config items. */
+        int midi_id = config_get_int(CFG_MACHINE, NULL, "midi", 0);
+
+        /* Fall back to the virtual output (index 0, always available) when
+           the configured destination no longer exists, like win-midi does. */
+        if (!mac_midi_open(midi_id))
+        {
+                pclog("MIDI: device %i unavailable, using virtual output\n",
+                      midi_id);
+                mac_midi_open(0);
+        }
+}
+
+void midi_close(void)
+{
+        mac_midi_close();
+}
+
+static int midi_pos, midi_len;
+static uint8_t midi_command[4];
+static int midi_lengths[8] = {3, 3, 3, 3, 2, 2, 3, 1};
+static int midi_insysex;
+static uint8_t midi_sysex_data[1024+2];
+
+void midi_write(uint8_t val)
+{
+        if ((val & 0x80) && !(val == 0xf7 && midi_insysex))
+        {
+                midi_pos = 0;
+                midi_len = midi_lengths[(val >> 4) & 7];
+                midi_command[0] = midi_command[1] = midi_command[2] = midi_command[3] = 0;
+                if (val == 0xf0)
+                        midi_insysex = 1;
+        }
+
+        if (midi_insysex)
+        {
+                midi_sysex_data[midi_pos++] = val;
+
+                if (val == 0xf7 || midi_pos >= 1024+2)
+                {
+                        mac_midi_send(midi_sysex_data, midi_pos);
+                        midi_insysex = 0;
+                }
+                return;
+        }
+
+        if (midi_len)
+        {
+                /* Deliberate deviation from alsa/win (both have a latent
+                   unbounded overflow here): when a complete message was
+                   just sent and a data byte follows, that's MIDI running
+                   status — the status byte is omitted from the stream.
+                   Reuse the stored status (midi_command[0]) instead of
+                   running off the end of midi_command. */
+                if (midi_pos >= midi_len)
+                        midi_pos = 1;
+                midi_command[midi_pos] = val;
+
+                midi_pos++;
+
+                if (midi_pos == midi_len)
+                        mac_midi_send(midi_command, midi_len);
+        }
+}
+
+int midi_get_num_devs(void)
+{
+        return mac_midi_num_devs();
+}
+
+void midi_get_dev_name(int num, char *s)
+{
+        /* plat-midi.h passes no size (the core strcpy's the result into
+           fixed buffers, e.g. 50 bytes in midi_alsa.c), so bound the copy
+           to a small fixed size here. */
+        mac_midi_dev_name(num, s, 64);
+}
 
 /* ========================================================================
  * Misc core callbacks
@@ -455,6 +550,7 @@ static void emu_thread_stop(void)
         savenvr();
         saveconfig(NULL);
         device_close_all();
+        midi_close(); /* mirrors wx-sdl2.c:725 */
 }
 
 /* ========================================================================
@@ -538,6 +634,7 @@ static void boot_machine(void)
 
         loadbios();
         resetpchard();
+        midi_init(); /* mirrors wx-sdl2.c:673 — opens the configured device */
 }
 
 int pcem_bridge_start(void)
@@ -1329,11 +1426,24 @@ int pcem_bridge_devcfg_begin(int which, int primary, int model_index,
                 title_out[title_sz - 1] = 0;
         }
 
-        /* CONFIG_MIDI is skipped (wx hides it when midi_get_num_devs()==0;
-           the macOS MIDI stub always returns 0). */
+        /* CONFIG_MIDI items are included when at least one MIDI out device
+           exists (wx precedent: wx-deviceconfig.cc:74-90). Unlike every
+           other item type, their value lives in the NULL config section
+           (midi_init reads it the same way). */
         for (config = devcfg_device->config;
              config->type != -1 && devcfg_count < DEVCFG_MAX_ITEMS; config++)
         {
+                if (config->type == CONFIG_MIDI)
+                {
+                        if (midi_get_num_devs() <= 0)
+                                continue;
+                        devcfg_items[devcfg_count] = config;
+                        devcfg_values[devcfg_count] =
+                                config_get_int(CFG_MACHINE, NULL, config->name,
+                                               config->default_int);
+                        devcfg_count++;
+                        continue;
+                }
                 if (config->type != CONFIG_BINARY && config->type != CONFIG_SELECTION)
                         continue;
                 devcfg_items[devcfg_count] = config;
@@ -1369,6 +1479,13 @@ int pcem_bridge_devcfg_item(int idx, pcem_devcfg_item_t *out)
                 for (c = 0; c < 16 && config->selection[c].description[0]; c++)
                         out->num_options++;
         }
+        else if (config->type == CONFIG_MIDI)
+        {
+                /* Synthesized options: one per MIDI out device. The Swift
+                   view renders any non-BINARY item as a Picker, so this
+                   needs no Swift changes. */
+                out->num_options = midi_get_num_devs();
+        }
         return 0;
 }
 
@@ -1379,6 +1496,24 @@ int pcem_bridge_devcfg_option(int idx, int opt, char *desc, int desc_sz)
         if (idx < 0 || idx >= devcfg_count)
                 return -1;
         config = devcfg_items[idx];
+
+        /* MIDI options are synthesized from the backend's device list;
+           the option's value is the device index (wx-deviceconfig.cc:81-87). */
+        if (config->type == CONFIG_MIDI)
+        {
+                char name[64];
+
+                if (opt < 0 || opt >= midi_get_num_devs())
+                        return -1;
+                if (desc && desc_sz > 0)
+                {
+                        midi_get_dev_name(opt, name);
+                        strncpy(desc, name, desc_sz - 1);
+                        desc[desc_sz - 1] = 0;
+                }
+                return opt;
+        }
+
         if (opt < 0 || opt >= 16 || !config->selection[opt].description[0])
                 return -1;
         if (desc && desc_sz > 0)
@@ -1400,16 +1535,25 @@ int pcem_bridge_devcfg_apply(void)
 {
         int c;
         int changed = 0;
+        int midi_changed = 0;
 
         if (!devcfg_device)
                 return 0;
 
+        /* MIDI values live in the NULL config section, everything else in
+           the device's own section (wx-deviceconfig.cc:117/144). */
         for (c = 0; c < devcfg_count; c++)
         {
                 device_config_t *config = devcfg_items[c];
-                if (config_get_int(CFG_MACHINE, devcfg_device->name, config->name,
+                char *section = config->type == CONFIG_MIDI
+                                ? NULL : devcfg_device->name;
+                if (config_get_int(CFG_MACHINE, section, config->name,
                                    config->default_int) != devcfg_values[c])
+                {
                         changed = 1;
+                        if (config->type == CONFIG_MIDI)
+                                midi_changed = 1;
+                }
         }
         if (!changed)
                 return 0;
@@ -1417,7 +1561,9 @@ int pcem_bridge_devcfg_apply(void)
         for (c = 0; c < devcfg_count; c++)
         {
                 device_config_t *config = devcfg_items[c];
-                config_set_int(CFG_MACHINE, devcfg_device->name, config->name,
+                char *section = config->type == CONFIG_MIDI
+                                ? NULL : devcfg_device->name;
+                config_set_int(CFG_MACHINE, section, config->name,
                                devcfg_values[c]);
         }
 
@@ -1433,6 +1579,13 @@ int pcem_bridge_devcfg_apply(void)
                 pause = 1;
                 thread_sleep(100);
                 resetpchard();
+                /* Cheap improvement over wx (which only applies a MIDI
+                   switch on next boot): reopen the MIDI device right away. */
+                if (midi_changed)
+                {
+                        midi_close();
+                        midi_init();
+                }
         }
         return 1;
 }

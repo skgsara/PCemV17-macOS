@@ -230,9 +230,9 @@ typedef struct
 {
         char name[256];         /* config key */
         char description[256];  /* UI label */
-        int type;               /* CONFIG_BINARY / CONFIG_SELECTION (MIDI filtered out) */
+        int type;               /* CONFIG_BINARY / CONFIG_SELECTION / CONFIG_MIDI */
         int value;              /* current value */
-        int num_options;        /* SELECTION only */
+        int num_options;        /* SELECTION (static list) / MIDI (device count) */
 } pcem_devcfg_item_t;
 
 #define PCEM_DEVCFG_MACHINE 0
@@ -251,8 +251,9 @@ int pcem_bridge_devcfg_has_config(int which, int primary, int model,
 /* Begin a device-config session: resolves the device, snapshots item values
    via config_get_int(CFG_MACHINE, ...). Returns the item count (0 = no
    config), -1 = no device. `title_out` (optional) receives device->name.
-   CONFIG_MIDI items are skipped (mirrors wx hiding them when
-   midi_get_num_devs()==0; the macOS stub always returns 0). */
+   CONFIG_MIDI items are included whenever midi_get_num_devs() > 0 (wx hides
+   them only when no MIDI out devices exist); their values live in the NULL
+   config section, unlike all other item types. */
 int pcem_bridge_devcfg_begin(int which, int primary, int model,
                              const char *hdd_internal, char *title_out,
                              int title_sz);

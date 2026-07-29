@@ -2,9 +2,9 @@ import SwiftUI
 
 /// M5 slice 1: native replacement for the generic wx device-config dialog
 /// (wx-deviceconfig.cc). Driven entirely by the bridge item list: a Toggle
-/// per CONFIG_BINARY item, a Picker per CONFIG_SELECTION item (CONFIG_MIDI
-/// is filtered out by the bridge, like wx hiding it when no MIDI devices
-/// exist).
+/// per CONFIG_BINARY item, a Picker per CONFIG_SELECTION item. CONFIG_MIDI
+/// items (M5 slice 3) also arrive as Pickers — the bridge synthesizes their
+/// options from the CoreMIDI device list, so this view stays generic.
 ///
 /// Like wx's OK handler, Apply dirty-checks first; when a machine is
 /// running the user confirms wx's "This will reset PCem!" prompt BEFORE
