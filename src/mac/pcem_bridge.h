@@ -32,6 +32,8 @@ void pcem_bridge_set_stop_callback(pcem_stop_cb cb, void *ctx);
 int  pcem_bridge_start(void);
 void pcem_bridge_stop(void);      /* stop the emulation thread (app keeps running) */
 void pcem_bridge_quit(void);      /* stop + full core shutdown, call before exit */
+/* The per-user data dir (~/.pcem/, trailing slash) — for "Open Data Folder". */
+void pcem_bridge_get_data_path(char *s, int size);
 void pcem_bridge_pause(int paused);
 int  pcem_bridge_is_paused(void);
 /* kind: 0 = soft reset, 1 = hard reset, 2 = ctrl+alt+del */

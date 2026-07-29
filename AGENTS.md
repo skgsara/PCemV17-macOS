@@ -42,9 +42,10 @@ much as possible**. This is a multi-month effort done in milestones.
   "Configure…" sub-dialogs ✅ 2026-07-28, wx target + SDL/wx deps removed from
   Xcode ✅ 2026-07-28, CoreMIDI ✅ 2026-07-29, CoreAudio ✅ 2026-07-29,
   app icon ✅ 2026-07-29, signing groundwork (hardened runtime +
-  `macos/sign_and_notarize.sh`) ✅ 2026-07-29; remaining: owner's Apple
-  Developer account steps (script header checklist), joystick mapping +
-  GameController (deferred — needs a controller to test).
+  `macos/sign_and_notarize.sh`) ✅ 2026-07-29, per-user data folder
+  (`~/.pcem`) ✅ 2026-07-29; remaining: owner's Apple Developer account
+  steps (script header checklist), joystick mapping + GameController
+  (deferred — needs a controller to test).
 
 ## Current status
 
@@ -138,6 +139,10 @@ adhoc+runtime; Debug stays adhoc-only, fine for local dev).
 notarytool → staple, with the owner's Apple-account checklist in its
 header (membership, Xcode certificate, `notarytool store-credentials`).
 Remaining M5: her account steps; joystick when hardware exists.
+M5 data-folder slice (2026-07-29): the app no longer borrows data from the
+repo — everything lives in `~/.pcem` (see "Data-folder paths — FIXED"
+below); Machine → Open Data Folder reveals it. Release app rebuilt and
+re-copied to `build/release/` + Desktop with the fix.
 
 ## How to build
 
@@ -171,10 +176,11 @@ Two independent build systems exist. **Both must keep working.**
     BGRX staging framebuffer behind a mutex (port of `sdl_blit_memtoscreen`).
     **Includes NO Apple system headers beyond libc** (see hazard below).
   - `pcem_mac_platform.m/.h` — one of THREE files mixing frameworks with the
-    shell: NSBundle resource path, config dir listing, NSLog,
-    `dispatch_async_f` to main. The others: `pcem_mac_midi.m/.h` — CoreMIDI
-    backend behind a plain-C API (M5 slice 3); `pcem_mac_sound.m` —
-    CoreAudio sound backend (M5 slice 4, see "Current status").
+    shell: per-user data dir (`~/.pcem`) path + first-run creation, config
+    dir listing, NSLog, `dispatch_async_f` to main. The others:
+    `pcem_mac_midi.m/.h` — CoreMIDI backend behind a plain-C API (M5 slice
+    3); `pcem_mac_sound.m` — CoreAudio sound backend (M5 slice 4, see
+    "Current status").
   - `keymap.c/.h` — macOS `NSEvent.keyCode` → PC set-1 scancode table (ported from
     `SDLScancodeToSystemScancode` in `wx-sdl2-display.c`).
   - `PCemMacApp.swift` — app/window/menus. Full menu bar mirroring the wx
@@ -260,22 +266,20 @@ Two independent build systems exist. **Both must keep working.**
   Configure button's `has_config` with the previous model's gfxcard for one
   render pass. Latent in upstream too (wx calls the same path).
 
-## Known distribution blocker: data-folder paths (fix before public release)
+## Data-folder paths — FIXED 2026-07-29 (was the distribution blocker)
 
-The Release `.app` is currently **dev-only**: the post-build script symlinks
-the repo's `roms/`, `nvr/`, `configs/`, `screenshots/` + `pcem.cfg` into
-`Contents/Resources/`, and `get_pcem_path()` (bridge) returns that — so the
-app breaks if the repo folder moves, and a downloaded copy has no ROMs or
-configs at all. Designed fix (not yet implemented, 2026-07-29):
-- `get_pcem_path()` → per-user data dir (`~/.pcem`, matching upstream Linux,
-  or `~/Library/Application Support/PCem`), created on first run with
-  `roms/`, `nvr/`, `configs/`, `screenshots/` subdirs and a default
-  `pcem.cfg`.
-- Ship NO ROMs (copyright — upstream rule); the machine manager should warn
-  when `roms/` is empty (bridge already detects "No ROMs present" at start).
-- Add a Machine menu item "Open Data Folder" (NSWorkspace open) so users can
-  drop BIOS ROMs in. Remove the symlink post-build script for distribution
-  builds (keep it for Debug dev builds, or switch dev to the same dir).
+`get_pcem_path()` now returns the per-user data dir `~/.pcem/` (matching the
+upstream Linux wx build), created on first run by
+`pcem_mac_ensure_data_dirs()` with `roms/ nvr/ configs/ screenshots/`
+subdirs; the core's `paths_init()` derives everything from it. No ROMs are
+shipped (copyright — upstream rule); the "No ROMs present" startup alert
+names the folder and offers to open it, and **Machine → Open Data Folder**
+(`pcem_bridge_get_data_path` + NSWorkspace) reveals it in Finder. The
+symlink post-build script is gone from `project.yml` — Debug and Release
+behave identically and the `.app` is fully self-contained. The owner's
+existing `roms/ configs/ nvr/ pcem.cfg` were copied (not moved) into
+`~/.pcem`; the repo copies remain for the autotools wx fallback build,
+which still uses its own repo-relative paths.
 
 ### Build flags that matter (both build systems)
 - Defines: `PCEM_RENDER_WITH_TIMER`, `PCEM_RENDER_TIMER_LOOP`, `off64_t=off_t`,

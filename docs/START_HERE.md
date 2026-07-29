@@ -53,10 +53,12 @@ If the project file ever gets messed up: open Terminal in this folder and type
   `macos/sign_and_notarize.sh` — open it and read the header comments.
 - A ready-to-run **Release build** lives at `build/release/PCemMac.app`
   (a copy is also on your Desktop). It starts faster than the Debug build
-  from Xcode. Note: it borrows the ROMs/configs from this folder via
-  symlinks, so don't move or delete the project folder. (This is why the
-  app can't be shared yet — making it work anywhere is a planned fix,
-  written up in `AGENTS.md` under "Known distribution blocker".)
+  from Xcode.
+- **Your data moved (2026-07-29):** the app no longer borrows ROMs/configs
+  from this folder. Everything it needs now lives in `~/.pcem` (your ROMs,
+  configs and NVR files were copied there automatically). To see it in
+  Finder: **Machine → Open Data Folder**. New ROMs go in `~/.pcem/roms`.
+  This was the last blocker for sharing the app publicly.
 
 ## How to continue after a break (new chat session)
 
@@ -115,9 +117,11 @@ M4 and M5 we rebuilt all of them in SwiftUI, then removed the old interface:
   config and switching the Machine model in Settings. Cause: for one frame,
   the video Configure button checked the *old* machine's video card against
   the *new* machine — reading one slot before a table (upstream bug, both
-  builds). One guard line in `video.c` fixed it. Also noted for later:
-  the Release app must stop borrowing this folder's ROMs before it can be
-  shared publicly.
+  builds). One guard line in `video.c` fixed it.
+- Later the same day: the **data-folder fix** — the app no longer depends on
+  this project folder at all. ROMs, configs and save-state (NVR) files live
+  in `~/.pcem` now (yours were copied over), reachable via **Machine → Open
+  Data Folder**. The Release app on your Desktop was rebuilt with the fix.
 
 ## What happened on 2026-07-28 (the short version)
 

@@ -80,10 +80,10 @@ xcodebuild -project PCem.xcodeproj -scheme PCemMac -configuration Release build
 
 then open the app from
 `~/Library/Developer/Xcode/DerivedData/PCem-*/Build/Products/Release/PCemMac.app`
-(or just open `PCem.xcodeproj` and press ⌘R). The app expects this
-repository's `roms/`, `configs/` etc. alongside it — it borrows them via
-symlinks inside the bundle, so keep the repo folder in place. Place your
-own BIOS ROM images in `roms/` (none are included, see the note above).
+(or just open `PCem.xcodeproj` and press ⌘R). On first launch the app
+creates its data folder at `~/.pcem` (same convention as the Linux build) —
+place your own BIOS ROM images in `~/.pcem/roms` (none are included, see the
+note above); **Machine → Open Data Folder** reveals it in Finder.
 `macos/sign_and_notarize.sh` produces a shareable Developer-ID-signed,
 notarized build once you have an Apple Developer account.
 

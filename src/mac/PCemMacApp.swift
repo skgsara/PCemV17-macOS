@@ -53,11 +53,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installBridgeCallbacks()
 
         if pcem_bridge_start() == 0 {
+            var pathBuf = [CChar](repeating: 0, count: 1024)
+            pcem_bridge_get_data_path(&pathBuf, Int32(pathBuf.count))
+            let dataPath = String(cString: pathBuf)
             let alert = NSAlert()
             alert.messageText = "No ROMs present"
             alert.informativeText =
-                "PCem needs at least one romset in the roms folder."
-            alert.runModal()
+                "PCem needs at least one romset in the roms folder.\n\n" +
+                "Put your ROM folders in \(dataPath)roms, then relaunch."
+            alert.addButton(withTitle: "Open Data Folder")
+            alert.addButton(withTitle: "Quit")
+            if alert.runModal() == .alertFirstButtonReturn {
+                NSWorkspace.shared.open(URL(fileURLWithPath: dataPath))
+            }
             NSApp.terminate(nil)
             return
         }
@@ -283,6 +291,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                             action: #selector(openSettings), keyEquivalent: "")
         machineMenu.addItem(withTitle: "Manage Machines…",
                             action: #selector(manageMachines), keyEquivalent: "")
+        machineMenu.addItem(.separator())
+        machineMenu.addItem(withTitle: "Open Data Folder",
+                            action: #selector(openDataFolder), keyEquivalent: "")
+    }
+
+    /// Reveal ~/.pcem in Finder (that's where roms/ configs/ nvr/ live).
+    @objc private func openDataFolder() {
+        var pathBuf = [CChar](repeating: 0, count: 1024)
+        pcem_bridge_get_data_path(&pathBuf, Int32(pathBuf.count))
+        NSWorkspace.shared.open(URL(fileURLWithPath: String(cString: pathBuf)))
     }
 
     // MARK: - Machine settings (M4 step 2: SwiftUI replacement for wx-config.c)

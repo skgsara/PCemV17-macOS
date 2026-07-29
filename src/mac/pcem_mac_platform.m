@@ -6,10 +6,25 @@
 
 #include "pcem_mac_platform.h"
 
-void pcem_mac_resource_path(char *s, int size)
+void pcem_mac_data_path(char *s, int size)
 {
-        NSString *res = [[NSBundle mainBundle] resourcePath];
-        snprintf(s, size, "%s/", [res fileSystemRepresentation]);
+        snprintf(s, size, "%s/.pcem/", [NSHomeDirectory() fileSystemRepresentation]);
+}
+
+void pcem_mac_ensure_data_dirs(void)
+{
+        char base[1024];
+        pcem_mac_data_path(base, sizeof(base));
+        NSString *baseNS = [NSString stringWithUTF8String:base];
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (NSString *sub in @[ @".", @"roms", @"nvr", @"configs", @"screenshots" ])
+        {
+                NSString *dir = [baseNS stringByAppendingPathComponent:sub];
+                [fm createDirectoryAtPath:dir
+            withIntermediateDirectories:YES
+                             attributes:nil
+                                  error:nil];
+        }
 }
 
 int pcem_mac_list_configs(const char *dir, char ***names_out)

@@ -3,8 +3,8 @@
  * pcem_bridge.m deliberately includes no Apple system headers beyond libc:
  * mach and dispatch headers typedef thread_t (collides with PCem's own
  * thread_t in thread.h) and unistd.h declares pause() (collides with PCem's
- * `int pause`). This file is the only mac-shell file that uses frameworks —
- * and it includes no core headers, so there is no collision here.
+ * `int pause`). Framework files like this one (also pcem_mac_midi.m and
+ * pcem_mac_sound.m) include no core headers, so there is no collision here.
  */
 #ifndef PCEM_MAC_PLATFORM_H
 #define PCEM_MAC_PLATFORM_H
@@ -13,8 +13,13 @@
 extern "C" {
 #endif
 
-/* Contents/Resources/ path of the app bundle, with trailing slash. */
-void pcem_mac_resource_path(char *s, int size);
+/* Per-user data directory (~/.pcem/, matching the upstream Linux wx build),
+   with trailing slash. roms/ nvr/ configs/ screenshots/ live under it. */
+void pcem_mac_data_path(char *s, int size);
+
+/* Create the data dir and its roms/ nvr/ configs/ screenshots/ subdirs if
+   they don't exist yet (first run). No-op afterwards. */
+void pcem_mac_ensure_data_dirs(void);
 
 /* Lists *.cfg files in dir (names without extension, sorted).
    Returns the count and hands the caller a malloc'd array of strdup'd

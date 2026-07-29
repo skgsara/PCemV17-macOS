@@ -745,3 +745,41 @@ sweep calling the exact crashing API with -1 across all models: WITHOUT the
 guard the app dies at launch (bus error — diagnosis confirmed), WITH the
 guard it completes and the app runs. Sweep removed. Both build systems
 rebuilt with the fix.
+
+---
+
+## 2026-07-29 — Session 16: per-user data folder ~/.pcem (distribution blocker fixed)
+
+**Done** — the app no longer borrows data from the repo; the Release `.app`
+is self-contained and can live anywhere:
+- `src/mac/pcem_mac_platform.m/.h`: `pcem_mac_resource_path` replaced by
+  `pcem_mac_data_path` (NSHomeDirectory + `/.pcem/`, matching the upstream
+  Linux wx build) + `pcem_mac_ensure_data_dirs` (creates `~/.pcem` +
+  `roms/ nvr/ configs/ screenshots/` on first run, no-op after).
+- `src/mac/pcem_bridge.m/.h`: `get_pcem_path()` → `pcem_mac_data_path` (the
+  core's `paths_init()` derives roms/nvr/configs/screenshots/logs from it —
+  one change covers all); `pcem_bridge_start()` calls the ensure-dirs BEFORE
+  `paths_init()`; new exported `pcem_bridge_get_data_path` for Swift.
+- `src/mac/PCemMacApp.swift`: **Machine → Open Data Folder** (NSWorkspace);
+  the "No ROMs present" startup alert now names `~/.pcem/roms` and has an
+  "Open Data Folder" button (quits either way — the ROM scan already ran,
+  relaunch after dropping ROMs in).
+- `project.yml`: the symlink post-build script is GONE — Debug and Release
+  behave identically. `xcodegen` regenerated.
+- Owner migration (one-time, copy not move): `pcem.cfg configs nvr
+  screenshots roms` → `~/.pcem/`. The repo copies stay for the autotools wx
+  fallback build (it keeps its own repo-relative paths).
+- Release app rebuilt and re-copied to `build/release/PCemMac.app` +
+  `~/Desktop/PCemMac.app`.
+
+**Verification**: clean Debug rebuild — `Contents/Resources/` contains ONLY
+`AppIcon.icns` (no symlinks). App launched: alive after 12 s (= ROM scan
+found `~/.pcem/roms`, no alert), log shows `path =
+/Users/sakuragawasara/.pcem/`, quit with NO new crash report. Repo `pcem.cfg`
+has empty `[Paths]` overrides, so nothing fought the move; machine cfgs
+reference disc images by absolute paths outside the repo — unaffected.
+Autotools untouched (no changes outside `src/mac/` + `project.yml`).
+
+**Next (M5)**: owner's Apple Developer account steps (header of
+`macos/sign_and_notarize.sh`), then run the script together. Joystick +
+GameController when a controller exists. After the account steps, M5 is done.

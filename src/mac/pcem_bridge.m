@@ -374,9 +374,14 @@ void warning(const char *format, ...)
 
 void get_pcem_path(char *s, int size)
 {
-        /* The post-build script symlinks roms/ nvr/ configs/ screenshots/ and
-           pcem.cfg into Contents/Resources/, exactly like the wx build. */
-        pcem_mac_resource_path(s, size);
+        /* Per-user data dir (~/.pcem/), created on first run by
+           pcem_bridge_start() — matches the upstream Linux wx build. */
+        pcem_mac_data_path(s, size);
+}
+
+void pcem_bridge_get_data_path(char *s, int size)
+{
+        pcem_mac_data_path(s, size);
 }
 
 int dir_exists(char *path)
@@ -652,6 +657,10 @@ int pcem_bridge_start(void)
 
         framebuf = malloc(FB_W * FB_H * 4);
         video_blit_memtoscreen_func = mac_blit_memtoscreen;
+
+        /* First run: create ~/.pcem + roms/ nvr/ configs/ screenshots/
+           BEFORE paths_init() derives the core's paths from them. */
+        pcem_mac_ensure_data_dirs();
 
         paths_init();
 

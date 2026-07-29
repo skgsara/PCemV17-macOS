@@ -129,18 +129,6 @@ targets:
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         NSPrincipalClass: NSApplication
         NSHighResolutionCapable: true
-    # Data-folder symlinks: get_pcem_path() (pcem_bridge.m) returns
-    # Contents/Resources/, so the app and the autotools build share ROMs and
-    # configs.
-    postBuildScripts:
-      - name: Link PCem data folders into bundle
-        script: |
-          RES_DIR="$TARGET_BUILD_DIR/$FULL_PRODUCT_NAME/Contents/Resources"
-          mkdir -p "$RES_DIR"
-          for item in roms nvr configs screenshots; do
-            ln -sfn "$SRCROOT/$item" "$RES_DIR/$item"
-          done
-          ln -sfn "$SRCROOT/pcem.cfg" "$RES_DIR/pcem.cfg"
 
 schemes:
   PCemMac:
