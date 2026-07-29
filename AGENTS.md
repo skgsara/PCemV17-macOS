@@ -252,6 +252,30 @@ Two independent build systems exist. **Both must keep working.**
   at quit and segfaults when the guest used paging (Windows 3.1 386 Enhanced);
   it also wrote ~40 MB of ram.dmp/rram.dmp on every quit. Four identical
   crash reports (`closepc → dumpregs → readmembl`) 2026-07-28/29.
+- `video.c` `video_card_getdevice()` (2026-07-29): guard `card < 0` before the
+  final `video_cards[card]` — a stale UI selection (gfxcard == GFX_BUILTIN
+  with a romset that has no builtin mapping in the switch above) read
+  `video_cards[-1]` and segfaulted. Reproduced as create-a-new-config →
+  Settings → switch Machine model; the Settings sheet evaluates the video
+  Configure button's `has_config` with the previous model's gfxcard for one
+  render pass. Latent in upstream too (wx calls the same path).
+
+## Known distribution blocker: data-folder paths (fix before public release)
+
+The Release `.app` is currently **dev-only**: the post-build script symlinks
+the repo's `roms/`, `nvr/`, `configs/`, `screenshots/` + `pcem.cfg` into
+`Contents/Resources/`, and `get_pcem_path()` (bridge) returns that — so the
+app breaks if the repo folder moves, and a downloaded copy has no ROMs or
+configs at all. Designed fix (not yet implemented, 2026-07-29):
+- `get_pcem_path()` → per-user data dir (`~/.pcem`, matching upstream Linux,
+  or `~/Library/Application Support/PCem`), created on first run with
+  `roms/`, `nvr/`, `configs/`, `screenshots/` subdirs and a default
+  `pcem.cfg`.
+- Ship NO ROMs (copyright — upstream rule); the machine manager should warn
+  when `roms/` is empty (bridge already detects "No ROMs present" at start).
+- Add a Machine menu item "Open Data Folder" (NSWorkspace open) so users can
+  drop BIOS ROMs in. Remove the symlink post-build script for distribution
+  builds (keep it for Debug dev builds, or switch dev to the same dir).
 
 ### Build flags that matter (both build systems)
 - Defines: `PCEM_RENDER_WITH_TIMER`, `PCEM_RENDER_TIMER_LOOP`, `off64_t=off_t`,

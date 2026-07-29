@@ -713,3 +713,35 @@ M5 is done except joystick (needs a controller).
   app first (features, Xcode/XcodeGen build instructions), autotools wx
   build demoted to "fallback", "Changes from stock v17" updated with the
   later patches (disc.c strcpy guard, pc.c dump skip, src/mac/, project.yml).
+
+---
+
+## 2026-07-29 — Session 15: model-switch crash fixed + distribution-path issue noted
+
+**Owner reports**:
+1. The Release app borrows roms/configs from the repo folder via symlinks —
+   fine for her, useless for the general public. Documented as a KNOWN
+   DISTRIBUTION BLOCKER with a designed fix in AGENTS.md (per-user data dir
+   `~/.pcem` created on first run, no ROMs shipped, "Open Data Folder" menu
+   item). Implementation is future work.
+2. Crash: create a new config, open Settings, switch the Machine model →
+   segfault. Full crash report provided.
+
+**Crash root cause** (from the report's symbols/registers):
+`SettingsView.videoRows` evaluates the video Configure button's
+`pcem_bridge_devcfg_has_config(PCEM_DEVCFG_VIDEO, primary=s.gfxcard,
+model=s.model)` on EVERY render — during a model switch there's one render
+pass with the NEW model but the PREVIOUS model's stale gfxcard
+(`GFX_BUILTIN` = -1). `video_card_getdevice(-1, romset)` falls through the
+builtin-romset switch (the new model's romset has no builtin mapping) to
+`return video_cards[-1].device` — an out-of-bounds read producing a garbage
+`device_t*` (0x10000000a) that `devcfg_device_has_config` dereferences.
+Latent upstream too: wx calls the same function with the same possible -1.
+
+**Fix**: `src/video.c` `video_card_getdevice()` — `if (card < 0) return NULL;`
+before the final table access (NULL = "no device" → button disabled, the
+correct answer for the inconsistent transient). Verified with a temporary
+sweep calling the exact crashing API with -1 across all models: WITHOUT the
+guard the app dies at launch (bus error — diagnosis confirmed), WITH the
+guard it completes and the app runs. Sweep removed. Both build systems
+rebuilt with the fix.

@@ -54,7 +54,9 @@ If the project file ever gets messed up: open Terminal in this folder and type
 - A ready-to-run **Release build** lives at `build/release/PCemMac.app`
   (a copy is also on your Desktop). It starts faster than the Debug build
   from Xcode. Note: it borrows the ROMs/configs from this folder via
-  symlinks, so don't move or delete the project folder.
+  symlinks, so don't move or delete the project folder. (This is why the
+  app can't be shared yet — making it work anywhere is a planned fix,
+  written up in `AGENTS.md` under "Known distribution blocker".)
 
 ## How to continue after a break (new chat session)
 
@@ -109,6 +111,13 @@ M4 and M5 we rebuilt all of them in SwiftUI, then removed the old interface:
   groundwork for **sharing the app** (Developer ID signing + notarization
   script). Remaining step is yours: the Apple Developer account checklist in
   `macos/sign_and_notarize.sh`.
+- Your bug report later that day caught one more crash: creating a new
+  config and switching the Machine model in Settings. Cause: for one frame,
+  the video Configure button checked the *old* machine's video card against
+  the *new* machine — reading one slot before a table (upstream bug, both
+  builds). One guard line in `video.c` fixed it. Also noted for later:
+  the Release app must stop borrowing this folder's ROMs before it can be
+  shared publicly.
 
 ## What happened on 2026-07-28 (the short version)
 

@@ -277,6 +277,13 @@ device_t *video_card_getdevice(int card, int romset)
                 case ROM_CBM_SL386SX25:
                 return &avga2_cbm_sl386sx_device;
         }
+        /* macOS port: card can be GFX_BUILTIN (-1) here when a UI passes a
+           stale selection with a romset that has no builtin mapping above —
+           video_cards[-1] is an out-of-bounds read that segfaults (PCemMac
+           crash 2026-07-29). NULL = "no device" is the correct answer for
+           that inconsistent state. */
+        if (card < 0)
+                return NULL;
         return video_cards[card].device;
 }
 
