@@ -548,3 +548,42 @@ SB16 Configure…, play a game with GM music).
 
 **Next (M5)**: CoreAudio (replace OpenAL; sound backend contract in
 AGENTS.md "Coupling hazards"). Then app icon/signing as the finale.
+
+---
+
+## 2026-07-29 — Session 12: CoreAudio sound backend (M5 slice 4)
+
+**Done** — the deprecated OpenAL backend is replaced by CoreAudio in the
+native shell; OpenAL is gone from the Xcode build entirely:
+- `src/mac/pcem_mac_sound.m` (new): the only file with AudioToolbox
+  includes, no PCem headers (same rule as the MIDI wrapper). Implements
+  the full `sound.h` backend contract — `initalmain`/`inital`/
+  `givealbuffer(int32_t*)`/`givealbuffer_cd(int16_t*)` + the global
+  `SOUNDBUFLEN` (core rewrites it live from the Sound menu);
+  `closeal` internal via `atexit`, like soundopenal.c.
+- Design: TWO output AudioUnits (default output), one per stream at its
+  NATIVE rate — 48 kHz main, 44.1 kHz CD, stereo int16 — so macOS mixes
+  and no resampler exists (mirrors OpenAL's two sources at two rates).
+  Each stream has a lock-free SPSC ring (65536 frames ≈ 1.4 s, C11
+  stdatomic head/tail, power-of-two mask): producer = emu thread (main)
+  / CD thread (CD), consumer = the render callback on CoreAudio's
+  realtime thread. Semantics match soundopenal.c 1:1: NEVER block,
+  drop the block when full, silence on underrun with automatic recovery,
+  `sound_gain` (dB → pow(10, dB/20)) read live and applied per sample
+  with clipping (bit-exact passthrough at 0 dB).
+- `project.yml`: `soundopenal.c` excluded from PCemCore,
+  `OpenAL.framework` removed from PCemMac (AudioToolbox provides the
+  AudioUnit API). Autotools untouched — the wx binary keeps OpenAL.
+
+**Verification**: ring logic standalone test (coder: fill/drop/wrap/
+clip/empty-read all pass); `otool -L` on the debug dylib: AudioToolbox +
+CoreMIDI linked, OpenAL absent; OpenAL deprecation warnings gone from
+the build log. End-to-end pipeline check with TEMPORARY frame counters
+(removed after): 19 s of ms-dos-5 boot, pushed ≈ pulled at 48000
+frames/s with a stable ~2000-frame (≈40 ms) lag — no underruns, no
+drift. 12 s launcher smoke run alive. NOT verified: actual audible
+sound — owner listening test (Windows 3.1 startup sound or a DOS game;
+also try Sound menu buffer length 50–400 ms and gain changes live).
+
+**Next (M5 finale)**: app icon + signing/notarization. Joystick +
+GameController whenever a controller is available.

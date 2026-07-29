@@ -40,9 +40,9 @@ much as possible**. This is a multi-month effort done in milestones.
 - **M5 — Remove wx entirely**: drop SDL/wx dependencies; optionally replace OpenAL with
   CoreAudio; CoreMIDI; app icon/signing/notarization. 🔶 IN PROGRESS — device
   "Configure…" sub-dialogs ✅ 2026-07-28, wx target + SDL/wx deps removed from
-  Xcode ✅ 2026-07-28, CoreMIDI ✅ 2026-07-29; remaining: joystick mapping +
-  GameController (deferred — needs a controller to test), optional
-  OpenAL→CoreAudio, app icon/signing (owner wants those LAST).
+  Xcode ✅ 2026-07-28, CoreMIDI ✅ 2026-07-29, CoreAudio ✅ 2026-07-29;
+  remaining: joystick mapping + GameController (deferred — needs a controller
+  to test), app icon/signing (owner wants those LAST).
 
 ## Current status
 
@@ -109,6 +109,20 @@ are synthesized as generic Picker options in the devcfg bridge, so
 `DeviceConfigView.swift` needed no changes. Switching device applies
 immediately (`midi_close`+`midi_init` after the reset — wx made you
 reboot).
+M5 slice 4 (2026-07-29): **CoreAudio replaces OpenAL** (deprecated by
+Apple) for sound output. `src/mac/pcem_mac_sound.m` (third
+framework-file, no PCem headers) implements the sound.h backend contract
+— two output AudioUnits at native rates (48 kHz main / 44.1 kHz CD,
+stereo int16; macOS mixes them, no resampler) fed by two lock-free SPSC
+ring buffers (65536 frames, C11 stdatomic; producers = emu/CD threads,
+consumer = the render callback on CoreAudio's realtime thread). Semantics
+match soundopenal.c exactly: never block, drop-on-full, silence on
+underrun, `sound_gain` applied live in the render callback. `SOUNDBUFLEN`
+is defined there (the core rewrites it from the Sound menu).
+`soundopenal.c` is excluded from PCemCore and OpenAL.framework dropped
+from the Xcode link — autotools keeps it for the wx binary. Verified
+end-to-end with temporary frame counters: pushed ≈ pulled at 48000
+frames/s with stable ~40 ms lag over 19 s of boot.
 
 ## How to build
 
@@ -141,10 +155,11 @@ Two independent build systems exist. **Both must keep working.**
     `clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)`, `timer_freq = 1e9`) + 2048×2048
     BGRX staging framebuffer behind a mutex (port of `sdl_blit_memtoscreen`).
     **Includes NO Apple system headers beyond libc** (see hazard below).
-  - `pcem_mac_platform.m/.h` — one of the TWO files mixing frameworks with the
+  - `pcem_mac_platform.m/.h` — one of THREE files mixing frameworks with the
     shell: NSBundle resource path, config dir listing, NSLog,
-    `dispatch_async_f` to main. The other is `pcem_mac_midi.m/.h` — CoreMIDI
-    backend behind a plain-C API (added M5 slice 3; see "Current status").
+    `dispatch_async_f` to main. The others: `pcem_mac_midi.m/.h` — CoreMIDI
+    backend behind a plain-C API (M5 slice 3); `pcem_mac_sound.m` —
+    CoreAudio sound backend (M5 slice 4, see "Current status").
   - `keymap.c/.h` — macOS `NSEvent.keyCode` → PC set-1 scancode table (ported from
     `SDLScancodeToSystemScancode` in `wx-sdl2-display.c`).
   - `PCemMacApp.swift` — app/window/menus. Full menu bar mirroring the wx
@@ -188,8 +203,10 @@ Two independent build systems exist. **Both must keep working.**
   `joystick_poll()` — these symbols must always exist at link time.
 - `startblit()`/`endblit()` (SDL mutex `ghMutex`) protect `buffer32` against the renderer.
   A new renderer must respect equivalent locking.
-- Sound backend contract (`soundopenal.c`, replaceable): `initalmain()`, `inital()`,
-  `closeal()`, `givealbuffer(int32_t*)`, `givealbuffer_cd(int16_t*)`.
+- Sound backend contract (swappable; native shell = `src/mac/pcem_mac_sound.m`
+  CoreAudio, autotools wx build = `soundopenal.c` OpenAL): `initalmain()`,
+  `inital()`, `givealbuffer(int32_t*)`, `givealbuffer_cd(int16_t*)`, plus the
+  global `int SOUNDBUFLEN`. Never block: drop-on-full, silence-on-underrun.
 - Video backend contract: implement `video_blit_memtoscreen_func` consuming `buffer32`
   (2048×2048 BITMAP, `video.h`), then call `video_blit_complete()`.
 - MIDI: `plat-midi.h`; the native shell implements it over CoreMIDI
@@ -217,9 +234,10 @@ Two independent build systems exist. **Both must keep working.**
 - Defines: `PCEM_RENDER_WITH_TIMER`, `PCEM_RENDER_TIMER_LOOP`, `off64_t=off_t`,
   `fopen64=fopen`, `fseeko64=fseek`, `ftello64=ftell`.
 - Networking is OFF (no `USE_NETWORKING`, no slirp). Don't enable casually.
-- Links (Xcode): OpenAL, IOKit, Carbon, Cocoa, QuartzCore, AudioToolbox,
-  CoreMIDI (M5 slice 3), pthread — no SDL2/wx since M5 slice 2. The
-  autotools wx build still links SDL2 + wx 3.3 (Homebrew, dynamic).
+- Links (Xcode): IOKit, Carbon, Cocoa, QuartzCore, AudioToolbox (CoreAudio
+  backend), CoreMIDI (M5 slice 3), pthread — no SDL2/wx since M5 slice 2,
+  no OpenAL since M5 slice 4. The autotools wx build still links SDL2 +
+  wx 3.3 + OpenAL (Homebrew, dynamic).
 
 ## How M4 was attacked (kept as a record; M4 is DONE)
 
@@ -271,8 +289,8 @@ The wx config dialogs were replaced with SwiftUI, one at a time, in the `PCemMac
   needed). Mappings persist in the `[Joysticks]` cfg section — `loadconfig`/
   `saveconfig` in `pc.c` already handle them.
 - ~~**CoreMIDI**~~ ✅ 2026-07-29 (slice 3, see "Current status").
-- **Optional**: OpenAL→CoreAudio (sound backend contract in "Coupling
-  hazards"). **App icon, signing/notarization come LAST** (owner decision
+- ~~**OpenAL→CoreAudio**~~ ✅ 2026-07-29 (slice 4, see "Current status").
+- **App icon, signing/notarization come LAST** (owner decision
   2026-07-29), after all functional work.
 
 Known M3 leftovers to fix when they bite: no screenshots/shaders, no joystick UI,

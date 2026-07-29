@@ -67,7 +67,8 @@ targets:
           - "cdrom-ioctl.c"             # Windows-only
           - "cdrom-ioctl-linux.c"       # Linux-only
           - "cdrom-ioctl-dummy.c"       # other-OS fallback
-          - "midi_alsa.c"               # Linux-only (macOS uses wx-sdl2-midi.c stub)
+          - "midi_alsa.c"               # Linux-only (native shell uses the CoreMIDI backend in src/mac)
+          - "soundopenal.c"             # replaced by the CoreAudio backend in src/mac (M5)
           # dynarec backends for other CPUs (arm64 is selected via __aarch64__)
           - "codegen_backend_x86.c"
           - "codegen_backend_x86_ops.c"
@@ -92,7 +93,6 @@ targets:
       - src/mac
     dependencies:
       - target: PCemCore
-      - sdk: OpenAL.framework
       - sdk: IOKit.framework
       - sdk: Carbon.framework
       - sdk: Cocoa.framework
