@@ -619,3 +619,44 @@ clean exit, NO new crash report. (Before the fix this path produced the
 machine dropping below 100% speed under Windows 3.1 + OPL FM load (the
 window title shows the %) — owner to retest and report the speed reading;
 if it stays at 100% and still crackles, the backend needs another look.
+
+---
+
+## 2026-07-29 — Session 13: MIDI crackle/WAV hang diagnosed — upstream limitation, NOT a port bug
+
+**Owner's audio tests (native build)**: DING.WAV clean, CANYON.MID crackling,
+DING.WAV after MIDI stuck + Windows unresponsive. A/B against the wx build:
+DING clean, CANYON crackling there too.
+
+**Controlled experiment**: fresh native boot → DING clean → CANYON crackle →
+DING stuck. So MIDI playback scrambles subsequent digital audio.
+
+**Instrumented run** (temporary pclog in `sound_sb_dsp.c`/`sound_opl.c`/`pc.c`,
+removed after): during CANYON.MID the Windows 3.1 SB 1.5 driver streams MIDI
+through the DSP's **MIDI UART mode** (DSP commands 0x30-0x37) — PCem v17's
+`sound_sb_dsp.c` has NO handlers for these (only a `case 0x38: /*TODO*/`).
+The MIDI byte stream is misparsed as DSP commands (2,187 bogus 0x40
+set-time-constant commands, random others) → crackling noise + scrambled DSP
+state → the next WAV playback starts but loops a block ("stuck" progress
+bar, 45 looping IRQ bursts in the log). OPL write counter: **zero all
+session** — the driver never used FM synthesis, killing the "stuck notes"
+theory.
+
+**Conclusions**:
+1. Crackling MIDI + post-MIDI WAV hang = UPSTREAM PCem limitation (SB DSP
+   UART MIDI unimplemented), identical in both builds. The wx build was
+   never tested on WAV-after-MIDI, but the mechanism is shell-independent.
+2. The CoreAudio backend is healthy: clean WAV with normal DMA/IRQ flow.
+3. Emu-thread priority parity added and KEPT:
+   `pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0)` in
+   `emu_thread_proc` (wx uses SDL_THREAD_PRIORITY_HIGH) — keeps the
+   scheduler from demoting emulation to efficiency cores.
+
+**To actually hear MIDI from Windows 3.1**: needs a sound card whose MIDI
+path PCem emulates — SB16/AWE32 (MPU-401 → our CoreMIDI backend → a Mac
+synth app). SB 1.5's UART path doesn't exist in PCem. (Possible future
+upstream patch: implement DSP UART mode 0x30-0x37 → midi_write — small,
+contained, would make SB 1.5 MIDI work through CoreMIDI too.)
+
+**Verification after cleanup**: no SBDBG references left; Xcode + autotools
+(full clean rebuild) both green.

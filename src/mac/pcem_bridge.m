@@ -23,6 +23,7 @@
    PCem core names. Framework calls live in pcem_mac_platform.m. */
 #include <time.h>
 #include <pthread.h>
+#include <pthread/qos.h>
 #include <sys/stat.h>
 #include <string.h>
 #include <stdio.h>
@@ -493,6 +494,10 @@ static int started = 0;
 static void emu_thread_proc(void *param)
 {
         (void)param;
+        /* wx gives the emu thread SDL_THREAD_PRIORITY_HIGH (wx-sdl2.c:182);
+           match it with the macOS QoS equivalent so the scheduler doesn't
+           demote emulation to efficiency cores under load. */
+        pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
         int frames = 0;
         int drawits = 0;
         uint64_t old_time = host_ms();

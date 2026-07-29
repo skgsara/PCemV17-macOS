@@ -307,6 +307,13 @@ stuck keys possible if the app loses focus mid-keypress (mouse is released, keys
 are not), no "create blank disc image" or machine-status windows (wx dialogs —
 M4/M5), no host-CD-drive menu item (no optical drives on modern Macs).
 
+Known UPSTREAM limitations (not port bugs — don't chase them in the shell):
+- SB 1.5 MIDI music in Windows 3.1 crackles and breaks subsequent WAV
+  playback: the Creative driver uses the DSP's MIDI UART mode (0x30-0x37),
+  which PCem v17 never implemented (`sound_sb_dsp.c`). Diagnosed 2026-07-29 —
+  see PORTING_LOG session 13. For MIDI music use SB16/AWE32 (MPU-401 →
+  CoreMIDI). Implementing DSP UART mode is a possible future core patch.
+
 ## Rules for every session
 
 1. Read this file + the latest entries in `docs/PORTING_LOG.md` first. If the owner
