@@ -1255,6 +1255,188 @@ void pcem_bridge_settings_apply(const pcem_settings_t *s,
         pause = 0;
 }
 
+/* ========================================================================
+ * Device configuration (M5 slice 1) — port of the generic wx device-config
+ * dialog (wx-deviceconfig.cc). A device exposes a -1-terminated array of
+ * device_config_t items; the dialog reads/writes them with
+ * config_get_int/config_set_int under the device's own config section and,
+ * when a machine has been booted, saves + resets immediately so the new
+ * values get latched at device-init time (device.c).
+ * ======================================================================== */
+
+/* Declared in vid_voodoo.h; externed locally like video_blit_complete above. */
+extern device_t voodoo_device;
+
+#define DEVCFG_MAX_ITEMS 32
+
+static device_t *devcfg_device;
+static device_config_t *devcfg_items[DEVCFG_MAX_ITEMS];
+static int devcfg_values[DEVCFG_MAX_ITEMS]; /* staged, parallel to items */
+static int devcfg_count;
+
+/* The wx settings dialog's device resolution (wx-config.c:1220-1290),
+   driven by the dialog's PENDING selections. */
+static device_t *devcfg_resolve(int which, int primary, int model_index,
+                                const char *hdd_internal)
+{
+        switch (which)
+        {
+        case PCEM_DEVCFG_MACHINE:
+                return model_getdevice(model_index);
+        case PCEM_DEVCFG_VIDEO:
+                return video_card_getdevice(video_old_to_new(primary),
+                                            model_getromset_from_model(model_index));
+        case PCEM_DEVCFG_SOUND:
+                return sound_card_getdevice(primary);
+        case PCEM_DEVCFG_VOODOO:
+                return &voodoo_device;
+        case PCEM_DEVCFG_HDD:
+                return hdd_internal ? hdd_controller_get_device((char *)hdd_internal)
+                                    : NULL;
+        }
+        return NULL;
+}
+
+/* wx only checks config != NULL; we also treat an empty array (first
+   type == -1, e.g. pgc_config) as no-config instead of opening an empty
+   dialog. */
+static int devcfg_device_has_config(device_t *d)
+{
+        return d && d->config && d->config[0].type != -1;
+}
+
+int pcem_bridge_devcfg_has_config(int which, int primary, int model_index,
+                                  const char *hdd_internal)
+{
+        return devcfg_device_has_config(devcfg_resolve(which, primary,
+                                                       model_index, hdd_internal));
+}
+
+int pcem_bridge_devcfg_begin(int which, int primary, int model_index,
+                             const char *hdd_internal, char *title_out,
+                             int title_sz)
+{
+        device_config_t *config;
+
+        devcfg_device = devcfg_resolve(which, primary, model_index, hdd_internal);
+        devcfg_count = 0;
+        if (!devcfg_device_has_config(devcfg_device))
+                return devcfg_device ? 0 : -1;
+
+        if (title_out && title_sz > 0)
+        {
+                strncpy(title_out, devcfg_device->name, title_sz - 1);
+                title_out[title_sz - 1] = 0;
+        }
+
+        /* CONFIG_MIDI is skipped (wx hides it when midi_get_num_devs()==0;
+           the macOS MIDI stub always returns 0). */
+        for (config = devcfg_device->config;
+             config->type != -1 && devcfg_count < DEVCFG_MAX_ITEMS; config++)
+        {
+                if (config->type != CONFIG_BINARY && config->type != CONFIG_SELECTION)
+                        continue;
+                devcfg_items[devcfg_count] = config;
+                devcfg_values[devcfg_count] =
+                        config_get_int(CFG_MACHINE, devcfg_device->name,
+                                       config->name, config->default_int);
+                devcfg_count++;
+        }
+        return devcfg_count;
+}
+
+int pcem_bridge_devcfg_count(void)
+{
+        return devcfg_count;
+}
+
+int pcem_bridge_devcfg_item(int idx, pcem_devcfg_item_t *out)
+{
+        device_config_t *config;
+        int c;
+
+        if (idx < 0 || idx >= devcfg_count || !out)
+                return -1;
+        config = devcfg_items[idx];
+
+        memset(out, 0, sizeof(*out));
+        strncpy(out->name, config->name, sizeof(out->name) - 1);
+        strncpy(out->description, config->description, sizeof(out->description) - 1);
+        out->type = config->type;
+        out->value = devcfg_values[idx];
+        if (config->type == CONFIG_SELECTION)
+        {
+                for (c = 0; c < 16 && config->selection[c].description[0]; c++)
+                        out->num_options++;
+        }
+        return 0;
+}
+
+int pcem_bridge_devcfg_option(int idx, int opt, char *desc, int desc_sz)
+{
+        device_config_t *config;
+
+        if (idx < 0 || idx >= devcfg_count)
+                return -1;
+        config = devcfg_items[idx];
+        if (opt < 0 || opt >= 16 || !config->selection[opt].description[0])
+                return -1;
+        if (desc && desc_sz > 0)
+        {
+                strncpy(desc, config->selection[opt].description, desc_sz - 1);
+                desc[desc_sz - 1] = 0;
+        }
+        return config->selection[opt].value;
+}
+
+void pcem_bridge_devcfg_set(int idx, int value)
+{
+        if (idx < 0 || idx >= devcfg_count)
+                return;
+        devcfg_values[idx] = value;
+}
+
+int pcem_bridge_devcfg_apply(void)
+{
+        int c;
+        int changed = 0;
+
+        if (!devcfg_device)
+                return 0;
+
+        for (c = 0; c < devcfg_count; c++)
+        {
+                device_config_t *config = devcfg_items[c];
+                if (config_get_int(CFG_MACHINE, devcfg_device->name, config->name,
+                                   config->default_int) != devcfg_values[c])
+                        changed = 1;
+        }
+        if (!changed)
+                return 0;
+
+        for (c = 0; c < devcfg_count; c++)
+        {
+                device_config_t *config = devcfg_items[c];
+                config_set_int(CFG_MACHINE, devcfg_device->name, config->name,
+                               devcfg_values[c]);
+        }
+
+        /* wx's has_been_inited path (wx-deviceconfig.cc:210-214): persist +
+           reset immediately, independent of the parent settings dialog. The
+           bridge uses "a machine is running" (emu_running) instead; in edit
+           mode nothing runs and the parent settings apply's saveconfig()
+           persists the writes. pause stays set — the still-open settings
+           sheet owns the final pause = 0. */
+        if (emu_running)
+        {
+                saveconfig(NULL);
+                pause = 1;
+                thread_sleep(100);
+                resetpchard();
+        }
+        return 1;
+}
+
 /* ---- Hard-disc slots (M4 step 3) ------------------------------------------
    Ports of the wx HD page helpers: hd_types + check_hd_type (geometry
    heuristics), hd_file (probe), hdnew_dlgproc's OK handler (create),

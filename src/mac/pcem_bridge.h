@@ -219,6 +219,57 @@ int pcem_bridge_hd_image_create(const char *path, int spt, int hpc, int cyl,
 /* 0..100 while a create runs (port of create_drive_pos); -1 when idle. */
 int pcem_bridge_hd_create_progress(void);
 
+/* ---- Device configuration (M5 slice 1) ------------------------------------
+   Port of the generic wx device-config dialog (wx-deviceconfig.cc): a device
+   exposes an array of config items (checkboxes / comboboxes) stored per
+   config file via config_get_int/config_set_int. All five "Configure…"
+   buttons of the wx settings dialog (wx-config.c:1220-1290) resolve their
+   device from the dialog's PENDING selection, which is what the callers pass
+   here. */
+typedef struct
+{
+        char name[256];         /* config key */
+        char description[256];  /* UI label */
+        int type;               /* CONFIG_BINARY / CONFIG_SELECTION (MIDI filtered out) */
+        int value;              /* current value */
+        int num_options;        /* SELECTION only */
+} pcem_devcfg_item_t;
+
+#define PCEM_DEVCFG_MACHINE 0
+#define PCEM_DEVCFG_VIDEO   1
+#define PCEM_DEVCFG_SOUND   2
+#define PCEM_DEVCFG_VOODOO  3
+#define PCEM_DEVCFG_HDD     4
+
+/* Resolve the device for `which` from the caller's PENDING selection
+   (model index / old-style gfxcard number / sound_cards[] index / hdd
+   internal name). Returns 1 if it has a non-empty config (drives button
+   enablement), 0 otherwise. */
+int pcem_bridge_devcfg_has_config(int which, int primary, int model,
+                                  const char *hdd_internal);
+
+/* Begin a device-config session: resolves the device, snapshots item values
+   via config_get_int(CFG_MACHINE, ...). Returns the item count (0 = no
+   config), -1 = no device. `title_out` (optional) receives device->name.
+   CONFIG_MIDI items are skipped (mirrors wx hiding them when
+   midi_get_num_devs()==0; the macOS stub always returns 0). */
+int pcem_bridge_devcfg_begin(int which, int primary, int model,
+                             const char *hdd_internal, char *title_out,
+                             int title_sz);
+
+int  pcem_bridge_devcfg_count(void);
+int  pcem_bridge_devcfg_item(int idx, pcem_devcfg_item_t *out);      /* 0 ok / -1 range */
+int  pcem_bridge_devcfg_option(int idx, int opt, char *desc, int desc_sz); /* returns value, -1 range */
+void pcem_bridge_devcfg_set(int idx, int value);                     /* stage a new value */
+
+/* Dirty-check vs config_get_int; if dirty: config_set_int each staged value,
+   then — only if a machine is running — saveconfig(NULL) + pause +
+   resetpchard() (the wx dialog's has_been_inited path). In edit mode
+   (nothing running) just write the in-memory config; the parent settings
+   apply's saveconfig() persists it. Returns 1 if values were dirty, 0 if
+   unchanged. */
+int pcem_bridge_devcfg_apply(void);
+
 /* ---- Drives & sound (mirror the wx context-menu handlers) -----------------
    All of these are safe to call from the UI thread while emulation runs
    (the wx menu handlers do exactly the same). */

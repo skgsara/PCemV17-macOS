@@ -35,20 +35,23 @@ much as possible**. This is a multi-month effort done in milestones.
   `buffer32` (chose CALayer over Metal — simpler, swappable later); AppKit
   keyboard/mouse input. New target `PCemMac` + sources in `src/mac/`. ✅ 2026-07-27
 - **M4 — Config UI in SwiftUI**: replace machine manager (`wx-config_sel.c`) and settings
-  (`wx-config.c`) dialogs one at a time. 🔶 IN PROGRESS — machine manager ✅ 2026-07-28,
-  settings dialog ✅ 2026-07-28, HD slots ✅ 2026-07-28, device sub-dialogs ⬜ (M5)
+  (`wx-config.c`) dialogs one at a time. ✅ 2026-07-28 — machine manager, settings
+  dialog, HD slots all done (device sub-dialogs moved to M5, done there).
 - **M5 — Remove wx entirely**: drop SDL/wx dependencies; optionally replace OpenAL with
-  CoreAudio; CoreMIDI; app icon/signing/notarization. ⬜
+  CoreAudio; CoreMIDI; app icon/signing/notarization. 🔶 IN PROGRESS — device
+  "Configure…" sub-dialogs ✅ 2026-07-28; remaining: joystick axis/button mapping
+  (`wx-joystickconfig.cc`), remove the wx `PCem` target + SDL/wx deps, CoreMIDI
+  (then un-hide `CONFIG_MIDI` items), optional OpenAL→CoreAudio, app icon/signing.
 
 ## Current status
 
-M0–M3 done (2026-07-27); M4 steps 1–3 done (2026-07-28) — only the per-device
-"Configure…" sub-dialogs remain, deferred to M5. New target `PCemMac`: a native
-Swift/AppKit shell with **no SDL2 and no wxWidgets**, linking `PCemCore` via the
-bridge in `src/mac/`. Verified by the owner (2026-07-28): MS-DOS 5 boots, keyboard
-works, mouse capture/release works, and the guest cursor tracks the touchpad in
-both DOS and Windows 3.1 (after the tracking-area fix — see `EmulatorView.swift`
-bullet below and the 2026-07-28 entry in `docs/PORTING_LOG.md`).
+M0–M4 done; M5 in progress — device "Configure…" sub-dialogs done (2026-07-28).
+New target `PCemMac`: a native Swift/AppKit shell with **no SDL2 and no
+wxWidgets**, linking `PCemCore` via the bridge in `src/mac/`. Verified by the
+owner (2026-07-28): MS-DOS 5 boots, keyboard works, mouse capture/release
+works, and the guest cursor tracks the touchpad in both DOS and Windows 3.1
+(after the tracking-area fix — see `EmulatorView.swift` bullet below and the
+2026-07-28 entry in `docs/PORTING_LOG.md`).
 M4 step 1: the wx machine manager is replaced by a SwiftUI sheet (Machine →
 Manage Machines…): list/New/Copy/Rename/Delete/Boot via new
 `pcem_bridge_config_*` functions; view in `src/mac/MachineManagerView.swift`.
@@ -70,8 +73,18 @@ The bridge keeps a PENDING slot snapshot per settings session
 against the globals (`hd_pending_dirty` = wx's `hd_changed` + channel
 compares) and writes it back in apply; image probe/create
 (`pcem_bridge_hd_image_probe/_create`, minivhd) port `hd_file`/`hdnew_dlgproc`.
-Only the per-device "Configure…" sub-dialogs still need the wx build
-(`PCem` target, kept as reference until M5).
+M5 slice 1 (2026-07-28): the generic wx device-config dialog
+(`wx-deviceconfig.cc`) is replaced by `src/mac/DeviceConfigView.swift` +
+`pcem_bridge_devcfg_*` (all-int bridge API over `device_t.config`;
+CONFIG_BINARY → Toggle, CONFIG_SELECTION → Picker, CONFIG_MIDI filtered out
+until CoreMIDI lands). Five "Configure…" buttons in the settings sheet
+(Machine/Video/Voodoo/Sound/HD Controller) resolve their device from the
+PENDING selection exactly like `wx-config.c:1220-1290`; Apply dirty-checks,
+confirms "This will reset PCem!" when a machine runs, then writes +
+`saveconfig` + `resetpchard` immediately, independent of the parent sheet's
+Cancel (wx's `has_been_inited` path). **The native shell now has every
+user-visible settings feature of the wx build** except joystick axis/button
+mapping (`wx-joystickconfig.cc`, still M5).
 
 ## How to build
 
@@ -178,9 +191,9 @@ Two independent build systems exist. **Both must keep working.**
 - Links: SDL2, wx 3.3 (Homebrew, dynamic — the .app is NOT redistributable as-is),
   OpenAL, OpenGL, IOKit, Carbon, Cocoa, QuartzCore, AudioToolbox, pthread.
 
-## How to attack M4 (next session)
+## How M4 was attacked (kept as a record; M4 is DONE)
 
-Replace the wx config dialogs with SwiftUI, one at a time, in the `PCemMac` target:
+The wx config dialogs were replaced with SwiftUI, one at a time, in the `PCemMac` target:
 
 1. ~~**Machine manager first** (`wx-config_sel.c`)~~ ✅ 2026-07-28 — bridge file ops
    (`pcem_bridge_config_create/rename/copy/delete/rescan`,
@@ -203,9 +216,26 @@ Replace the wx config dialogs with SwiftUI, one at a time, in the `PCemMac` targ
    snapshot in the bridge, cdrom/zip channel exclusivity, `.img`/`.vhd`
    probe + creation (`hdnew_dlgproc`/`hdsize_dlgproc`/`hd_file` ports,
    minivhd) in `src/mac/HardDiscSheets.swift`.
-4. Device config dialogs (`wx-deviceconfig.cc`) come last; some devices have custom
-   UIs — stub or defer to M5.
+4. ~~Device config dialogs (`wx-deviceconfig.cc`)~~ ✅ 2026-07-28 (as M5 slice 1) —
+   generic, no custom UIs needed: `pcem_bridge_devcfg_*` + `DeviceConfigView.swift`;
+   five "Configure…" buttons in the settings sheet (see "Current status").
 5. Keep the wx `PCem` target building until M5 removes it.
+
+## How to attack the rest of M5
+
+- **Joystick axis/button mapping** (`wx-joystickconfig.cc`) — the last wx-only
+  settings UI. Custom dialog (not `device_config_t`-based): axis/button
+  assignment per joystick. Suggested: typed bridge API + SwiftUI sheet from the
+  Input tab, same pattern as the device-config port.
+- **Remove the wx `PCem` target**: after joystick mapping lands, nothing
+  user-visible needs wx. Drop the target + scheme from `project.yml`, stop
+  linking SDL2/wx/OpenGL. The autotools build keeps wx — decide with the owner
+  whether to touch it (it still builds the Linux-style binary).
+- **CoreMIDI**: implement `plat-midi.h` against CoreMIDI (replaces the
+  `wx-sdl2-midi.c` stub), then stop filtering `CONFIG_MIDI` items in
+  `pcem_bridge_devcfg_begin`.
+- **Optional**: OpenAL→CoreAudio (sound backend contract in "Coupling
+  hazards"), app icon, signing/notarization.
 
 Known M3 leftovers to fix when they bite: no screenshots/shaders, no joystick UI,
 MIDI stubbed, windowed-only (standard macOS fullscreen works via the green button),

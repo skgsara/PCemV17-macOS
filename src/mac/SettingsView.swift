@@ -2,9 +2,9 @@ import SwiftUI
 import AppKit
 
 /// M4 step 2: native replacement for the wx settings dialog (wx-config.c);
-/// M4 step 3 added the Hard Discs tab (hdconf_dlgproc port). Device
-/// "Configure" sub-dialogs remain M5. Edits the RUNNING machine in live
-/// mode, like wx's IDM_CONFIG.
+/// M4 step 3 added the Hard Discs tab (hdconf_dlgproc port); M5 slice 1 added
+/// the device "Configure…" buttons (DeviceConfigView). Edits the RUNNING
+/// machine in live mode, like wx's IDM_CONFIG.
 ///
 /// All state lives in a local copy of pcem_settings_t plus three strings
 /// (hdd controller / lpt device / cd model) and the HD slot array. Lists
@@ -57,6 +57,24 @@ struct SettingsView: View {
     @State private var errorText = ""
     @State private var tsFixProbe: ProbeResult? // timestamp-mismatch pending probe
     @State private var showTsFix = false
+
+    // Device "Configure…" sheet (M5 slice 1, port of wx's IDC_CONFIGURE*).
+    private struct DeviceConfigRequest: Identifiable {
+        let id = UUID()
+        let which: Int32      // PCEM_DEVCFG_*
+        let primary: Int32    // pending model / gfxcard / sound card selection
+        let model: Int32      // pending model (video romset resolution)
+        let hddInternal: String
+    }
+    @State private var deviceConfig: DeviceConfigRequest?
+
+    /// wx enablement: the resolved device has a non-empty config. Recomputed
+    /// from the tab's pending selection on every render, like the wx
+    /// recalc_*_list handlers.
+    private func devcfgHasConfig(_ which: Int32, primary: Int32 = 0,
+                                 model: Int32 = 0, hdd: String = "") -> Bool {
+        hdd.withCString { pcem_bridge_devcfg_has_config(which, primary, model, $0) != 0 }
+    }
 
     // Integer-valued picker option (value = the core's own index/number).
     private struct Opt: Identifiable {
@@ -124,6 +142,10 @@ struct SettingsView: View {
                 hdSlots[result.slot] = HDSlotState(spt: spt, hpc: hpc, cyl: cyl, path: path)
             }
         }
+        .sheet(item: $deviceConfig) { req in
+            DeviceConfigView(which: req.which, primary: req.primary,
+                             model: req.model, hddInternal: req.hddInternal)
+        }
         .alert("PCem error", isPresented: $showError) {
             Button("OK") {}
         } message: {
@@ -143,10 +165,18 @@ struct SettingsView: View {
     // MARK: - Tab contents
 
     @ViewBuilder private var machineRows: some View {
-            Picker("Machine", selection: $s.model) {
-                ForEach(modelOptions()) { o in Text(o.label).tag(o.value) }
+            HStack {
+                Picker("Machine", selection: $s.model) {
+                    ForEach(modelOptions()) { o in Text(o.label).tag(o.value) }
+                }
+                .onChange(of: s.model) { _ in modelChanged() }
+                Button("Configure…") {
+                    deviceConfig = DeviceConfigRequest(which: PCEM_DEVCFG_MACHINE,
+                                                       primary: 0, model: s.model,
+                                                       hddInternal: "")
+                }
+                .disabled(!devcfgHasConfig(PCEM_DEVCFG_MACHINE, model: s.model))
             }
-            .onChange(of: s.model) { _ in modelChanged() }
 
             if pcem_bridge_cpu_manu_count(s.model) > 1 {
                 Picker("CPU manufacturer", selection: $s.cpu_manufacturer) {
@@ -191,10 +221,19 @@ struct SettingsView: View {
     }
 
     @ViewBuilder private var videoRows: some View {
-            Picker("Device", selection: $s.gfxcard) {
-                ForEach(videoOptions()) { o in Text(o.label).tag(o.value) }
+            HStack {
+                Picker("Device", selection: $s.gfxcard) {
+                    ForEach(videoOptions()) { o in Text(o.label).tag(o.value) }
+                }
+                .disabled(pcem_bridge_model_has_fixed_gfx(s.model) != 0)
+                Button("Configure…") {
+                    deviceConfig = DeviceConfigRequest(which: PCEM_DEVCFG_VIDEO,
+                                                       primary: s.gfxcard, model: s.model,
+                                                       hddInternal: "")
+                }
+                .disabled(!devcfgHasConfig(PCEM_DEVCFG_VIDEO, primary: s.gfxcard,
+                                           model: s.model))
             }
-            .disabled(pcem_bridge_model_has_fixed_gfx(s.model) != 0)
 
             Picker("Speed", selection: $s.video_speed) {
                 ForEach(Array(videoSpeedNames.enumerated()), id: \.offset) { i, name in
@@ -202,13 +241,31 @@ struct SettingsView: View {
                 }
             }
 
-            Toggle("Voodoo Graphics", isOn: $s.voodoo.bool)
+            HStack {
+                Toggle("Voodoo Graphics", isOn: $s.voodoo.bool)
+                    .disabled(pcem_bridge_model_has_pci(s.model) == 0)
+                Spacer()
+                Button("Configure…") {
+                    deviceConfig = DeviceConfigRequest(which: PCEM_DEVCFG_VOODOO,
+                                                       primary: 0, model: s.model,
+                                                       hddInternal: "")
+                }
+                // wx gates IDC_CONFIGUREVOODOO on MODEL_PCI, like the toggle.
                 .disabled(pcem_bridge_model_has_pci(s.model) == 0)
+            }
     }
 
     @ViewBuilder private var soundRows: some View {
-            Picker("Device", selection: $s.sound_card) {
-                ForEach(soundOptions()) { o in Text(o.label).tag(o.value) }
+            HStack {
+                Picker("Device", selection: $s.sound_card) {
+                    ForEach(soundOptions()) { o in Text(o.label).tag(o.value) }
+                }
+                Button("Configure…") {
+                    deviceConfig = DeviceConfigRequest(which: PCEM_DEVCFG_SOUND,
+                                                       primary: s.sound_card, model: s.model,
+                                                       hddInternal: "")
+                }
+                .disabled(!devcfgHasConfig(PCEM_DEVCFG_SOUND, primary: s.sound_card))
             }
             Toggle("CMS / Game Blaster", isOn: $s.gameblaster.bool)
             Toggle("Gravis Ultrasound", isOn: $s.gus.bool)
@@ -237,10 +294,18 @@ struct SettingsView: View {
                     Text(name).tag(Int32(i))
                 }
             }
-            Picker("HD Controller", selection: $hddController) {
-                ForEach(hddOptions()) { o in Text(o.label).tag(o.value) }
+            HStack {
+                Picker("HD Controller", selection: $hddController) {
+                    ForEach(hddOptions()) { o in Text(o.label).tag(o.value) }
+                }
+                .onChange(of: hddController) { _ in hddChanged() }
+                Button("Configure…") {
+                    deviceConfig = DeviceConfigRequest(which: PCEM_DEVCFG_HDD,
+                                                       primary: 0, model: s.model,
+                                                       hddInternal: hddController)
+                }
+                .disabled(!devcfgHasConfig(PCEM_DEVCFG_HDD, hdd: hddController))
             }
-            .onChange(of: hddController) { _ in hddChanged() }
             Picker("CD Model", selection: $cdModel) {
                 ForEach(cdModelOptions()) { o in Text(o.label).tag(o.value) }
             }

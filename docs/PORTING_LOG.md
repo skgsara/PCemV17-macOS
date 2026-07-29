@@ -411,3 +411,57 @@ disk in FDISK. It's the SAME 152 MB image seen twice — AMIBIOS via the CMOS
 setting (Hard Disk C: Type 46, CHS-clamped to 1024 cylinders) and the
 xtide_at controller via LBA (full 152.4 MiB). Guest-side config quirk, not
 a port bug. Fix if desired: AMIBIOS setup → Hard Disk C: = Not installed.
+
+---
+
+## 2026-07-28 (night) — Session 9: device "Configure…" dialogs in SwiftUI (M5 slice 1)
+
+**Done** — the generic wx device-config dialog (`wx-deviceconfig.cc`) is replaced in
+the `PCemMac` target; this was the last deferred M4 leftover and the final
+user-visible settings feature that still needed the wx build (joystick axis/button
+mapping aside — separate custom dialog, still M5):
+- Bridge (`pcem_bridge.h/.m`, +233 lines): `pcem_devcfg_item_t` +
+  `pcem_bridge_devcfg_has_config/_begin/_count/_item/_option/_set/_apply`.
+  Device resolution ports the five wx invocation points (`wx-config.c:1220-1290`)
+  driven by the settings sheet's PENDING selection: machine → `model_getdevice`,
+  video → `video_card_getdevice(video_old_to_new(gfx),
+  model_getromset_from_model(model))` (romset matters for built-in-video machines),
+  sound → `sound_card_getdevice`, voodoo → `&voodoo_device`, HDD →
+  `hdd_controller_get_device`. Empty config arrays (`pgc_config`) count as
+  no-config; `CONFIG_MIDI` items are filtered out (wx hides them when
+  `midi_get_num_devs()==0`; the stub always returns 0 — un-filter when CoreMIDI
+  lands). Apply ports the wx OK handler 1:1: dirty-check vs `config_get_int` →
+  `config_set_int` → if a machine is running, `saveconfig(NULL)` + pause +
+  `resetpchard()` IMMEDIATELY, independent of the parent settings sheet's Cancel.
+  In edit mode (manager Configure…, nothing running) the writes ride the parent
+  apply's `saveconfig()` — wx's `has_been_inited == 0` path.
+- `src/mac/DeviceConfigView.swift` (new): fully generic — Toggle per CONFIG_BINARY,
+  Picker per CONFIG_SELECTION (values that match no option get a "Custom (0x…)"
+  placeholder; upstream has such quirks, e.g. `s3_bahamas64` default 4). wx's
+  "This will reset PCem!" confirmation shows BEFORE any write when dirty + running.
+- `src/mac/SettingsView.swift`: five "Configure…" buttons (Machine tab after the
+  Machine picker; Video tab next to the Device picker and the Voodoo toggle;
+  Sound tab next to the Device picker; Drives tab next to the HD Controller
+  picker), disabled via `devcfg_has_config` on the pending selection, presented
+  as a nested `.sheet`. Voodoo button gated on `model_has_pci` like wx's
+  `IDC_CONFIGUREVOODOO`.
+
+**Bugs fixed en route**:
+1. The device sheet rendered EMPTY (title + buttons only) — the same collapsed-Form
+   gotcha as the settings sheet (Session 6): a bare `Form` in a VStack sizes to
+   zero. Fix: explicit `.frame(width: 420, height: 120 + count*44)`.
+2. NOT a bug: the Voodoo sheet shows 7 items, not 8 — `recompiler` is behind
+   `#ifndef NO_CODEGEN` and `vid_voodoo_render.h:2` defines `NO_CODEGEN`
+   unconditionally in this tree.
+
+**Verification**: headless screenshot (temporary auto-open in
+`applicationDidFinishLaunching`, removed after) shows the Voodoo config fully
+rendered with correct defaults over ms-dos-5's loaded config. `xcodegen` regen;
+PCemMac + PCem (wx) schemes both build clean; autotools untouched; 12 s smoke run
+alive at the launcher. Interactive flow (change e.g. a Sound Blaster IRQ, Apply →
+reset prompt → reboot, value persisted under `[Sound Blaster …]` in the .cfg) to
+be exercised by the owner.
+
+**Next (M5)**: joystick axis/button mapping (`wx-joystickconfig.cc`) — the last
+wx-only UI; then removing the wx `PCem` target, CoreMIDI, optional CoreAudio,
+icon/signing. See "How to attack the rest of M5" in AGENTS.md.
